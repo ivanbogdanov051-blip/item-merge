@@ -31,6 +31,10 @@
   #ghost img { width: 60px; height: 60px; border-radius: 9px; opacity: .9; }
   #ghost div { position: absolute; top: 64px; left: 50%; transform: translateX(-50%); white-space: nowrap; background: rgba(0,0,0,.75); padding: 3px 8px; border-radius: 8px; font-size: 13px; font-weight: 700; }
   #hurt { position: fixed; inset: 0; pointer-events: none; box-shadow: inset 0 0 120px #ff2040; opacity: 0; z-index: 3; transition: opacity .3s; }
+  #cross { position: fixed; left: 50%; top: 50%; width: 22px; height: 22px; transform: translate(-50%,-50%); pointer-events: none; z-index: 4;
+    background: linear-gradient(#fff,#fff) center/2px 8px no-repeat, linear-gradient(#fff,#fff) center/8px 2px no-repeat; filter: drop-shadow(0 0 2px #000); }
+  #cross::after { content: ''; position: absolute; inset: 0; border: 2px solid rgba(255,255,255,.7); border-radius: 50%; }
+  #lockHint { position: fixed; left: 50%; top: 62%; transform: translateX(-50%); z-index: 6; background: rgba(20,24,40,.75); padding: 10px 18px; border-radius: 14px; text-align: center; font-weight: 600; pointer-events: none; display: none; }
   #joy { position: fixed; left: 24px; bottom: 24px; width: 130px; height: 130px; border-radius: 50%; background: rgba(255,255,255,.12); border: 2px solid rgba(255,255,255,.3); z-index: 6; display: none; touch-action: none; }
   #knob { position: absolute; left: 40px; top: 40px; width: 50px; height: 50px; border-radius: 50%; background: rgba(255,255,255,.5); pointer-events: none; }
   #btns { position: fixed; right: 18px; bottom: 22px; z-index: 6; display: none; width: 170px; height: 170px; }
@@ -62,9 +66,11 @@
 <div id="toasts"></div>
 <div id="ghost"><img alt=""><div></div></div>
 <div id="hurt"></div>
+<div id="cross"></div>
+<div id="lockHint">🖱️ Click to look around &amp; fight<br><small>Esc / Tab frees the mouse to drag &amp; merge items</small></div>
 <div id="joy"><div id="knob"></div></div>
 <div id="btns"><div class="btn" id="bAtk">⚔️</div><div class="btn" id="bJump">⤒</div><div class="btn" id="bDash">🚀</div></div>
-<div id="help">WASD/Arrows move · Click/F attack · Space jump · Shift dash · Drag mouse/Q/E camera · 1-0 select · Drag item onto item to MERGE · drag out to drop</div>
+<div id="help">WASD/Arrows move · Mouse look · Click/F attack · Space jump · Shift dash · Wheel/1-0 select · Esc/Tab → free mouse, drag item onto item to MERGE</div>
 
 <div class="screen" id="startScreen">
   <h1>MERGE QUEST</h1>
@@ -74,8 +80,9 @@
     <b>Move</b><span>WASD / Arrows · Joystick on phone</span>
     <b>Attack / use</b><span>Click · F · ⚔️ button</span>
     <b>Jump · Dash</b><span>Space · Shift (needs 🚀 item)</span>
-    <b>Camera</b><span>Drag screen · Q / E · Mouse wheel</span>
-    <b>Merge</b><span>Drag a slot onto another slot</span>
+    <b>Look</b><span>Mouse (click to capture) · Drag screen on phone · Q / E</span>
+    <b>Select item</b><span>Mouse wheel · 1–0 · Tap a slot</span>
+    <b>Merge</b><span>Esc / Tab to free the mouse, then drag a slot onto another</span>
     <b>Drop</b><span>Drag a slot down into the world</span>
   </div>
   <button id="playBtn" disabled>Generating world…</button>
@@ -127,7 +134,15 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 1400);
 scene.fog = new THREE.Fog(0x8fd3ff, 90, 320);
 scene.background = new THREE.Color(0x8fd3ff);
-addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+renderer.autoClear = false;
+// first-person viewmodel (rendered in its own pass so it never clips into walls)
+const vmScene = new THREE.Scene();
+const vmCam = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.01, 10);
+const vmHemi = new THREE.HemisphereLight(0xffffff, 0x556644, 0.8); vmScene.add(vmHemi);
+const vmDir = new THREE.DirectionalLight(0xffffff, 0.7); vmDir.position.set(1, 2, 1.5); vmScene.add(vmDir);
+const vm = new THREE.Group(); vm.position.set(.42, -.42, -.75); vmScene.add(vm);
+const vmHand = new THREE.Group(); vm.add(vmHand);
+addEventListener('resize', () => { camera.aspect = vmCam.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); vmCam.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
 const hemi = new THREE.HemisphereLight(0xcfe8ff, 0x4a5a2a, 0.7); scene.add(hemi);
 const ambient = new THREE.AmbientLight(0xffffff, 0.12); scene.add(ambient);
@@ -260,7 +275,7 @@ function buildHouse(x, z) {
     mesh(new THREE.BoxGeometry(.14, 1.2, .12), 0x6b4423, null, g, sx * (W / 2 + .19), 1.9, 0); }
   mesh(new THREE.BoxGeometry(2.1, 2.7, .1), 0x6b4423, null, g, 0, 1.35, D / 2 + .2).visible = false;
   const roof = new THREE.Group(); g.add(roof);
-  const rm = mesh(new THREE.ConeGeometry(W * .8, 3, 4), roofC, null, roof, 0, WH + 1.5, 0); rm.rotation.y = Math.PI / 4;
+  const rm = mesh(new THREE.ConeGeometry(W * .8, 3, 4), roofC, { side: THREE.DoubleSide }, roof, 0, WH + 1.5, 0); rm.rotation.y = Math.PI / 4;
   mesh(new THREE.BoxGeometry(.8, 2, .8), 0x8a8580, null, roof, 2, WH + 2, -1.5);
   // furniture
   mesh(new THREE.BoxGeometry(1.6, .5, 2.6), 0xd04050, null, g, -2.8, .25, 2.2);
@@ -561,8 +576,8 @@ function spawnLoot(it, x, z, pop = false, y0 = null) {
   const g = new THREE.Group(); const gy = groundAt(x, z, 999);
   g.position.set(x, y0 !== null ? gy + y0 : gy + 1, z); scene.add(g);
   const tex = new THREE.CanvasTexture(it.canvas);
-  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true })); sp.scale.set(1.15, 1.15, 1); g.add(sp);
-  const gl = glowSprite(new THREE.Color(tierOf(it.tier)[1]).getHex(), 2.6, .7); g.add(gl);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true })); sp.scale.set(.75, .75, 1); g.add(sp);
+  const gl = glowSprite(new THREE.Color(tierOf(it.tier)[1]).getHex(), 1.7, .6); g.add(gl);
   const l = { it, g, x, z, vy: pop ? R(5, 8) : 0, vx: pop ? R(-2.5, 2.5) : 0, vz: pop ? R(-2.5, 2.5) : 0, t: rand() * 6, ground: !pop, delay: .5 };
   loot.push(l); return l;
 }
@@ -572,12 +587,12 @@ function updateLoot(dt, T) {
   for (let i = loot.length - 1; i >= 0; i--) { const l = loot[i]; l.t += dt; l.delay -= dt;
     const gy = groundAt(l.x, l.z, l.g.position.y);
     if (!l.ground) { l.vy -= 18 * dt; l.x += l.vx * dt; l.z += l.vz * dt; l.g.position.y += l.vy * dt; if (l.g.position.y <= gy + 1 && l.vy < 0) { l.ground = true; } }
-    else l.g.position.y = Math.max(gy, WATER) + 1 + Math.sin(l.t * 2.5) * .15;
+    else l.g.position.y = Math.max(gy, WATER) + .55 + Math.sin(l.t * 2.5) * .12;
     l.g.position.x = l.x; l.g.position.z = l.z;
     const dx = player.pos.x - l.x, dz = player.pos.z - l.z, d = Math.hypot(dx, dz);
     if (l.delay > 0 || !alive) continue;
     if (d < mag && d > 1.2 && T.magnet) { l.x += dx / d * 12 * dt; l.z += dz / d * 12 * dt; }
-    if (d < 1.4 && Math.abs(player.pos.y + 1 - l.g.position.y) < 2.5) {
+    if (d < 1.5 && Math.abs(player.pos.y + .6 - l.g.position.y) < 2.5) {
       if (addToInv(l.it)) { scene.remove(l.g); loot.splice(i, 1); toast(`+ <span style="color:${tierOf(l.it.tier)[1]}">${l.it.name}</span>`, 1500); sfx(880, .08, 'triangle', .05, 1.4); }
       else if (fullWarn <= 0) { toast('🎒 Inventory full! Merge items or drag one out to drop it.'); fullWarn = 4; }
     }
@@ -640,18 +655,24 @@ function buildItemModel(it) {
   if (it.tier >= 4) { const gl = glowSprite(new THREE.Color(tierOf(it.tier)[1]).getHex(), 1.6, .35); gl.position.y = tip * .6; g.add(gl); }
   return g;
 }
-function refreshHeld() { if (pm.held) pm.hand.remove(pm.held); pm.held = buildItemModel(inv[sel]); pm.hand.add(pm.held); }
+// first-person arm: sleeve + hand, item held pointing forward
+{ const sleeve = mesh(new THREE.BoxGeometry(.12, .45, .12), 0x2f62b0, null, vm, .03, -.3, 0, false); sleeve.rotation.x = .2;
+  mesh(new THREE.SphereGeometry(.08, 10, 8), 0xffd2a8, null, vm, 0, -.04, 0, false); vm.scale.setScalar(.85); }
+function refreshHeld() { if (pm.held) vmHand.remove(pm.held); pm.held = buildItemModel(inv[sel]); pm.held.scale.setScalar(.75); vmHand.add(pm.held); }
+function eyePos() { return new V3(player.pos.x, player.pos.y + 1.6, player.pos.z); }
+function lookDir() { const d = new V3(); camera.getWorldDirection(d); return d; }
 function hurtPlayer(d) {
   if (player.invuln > 0 || player.dashT > 0 || !alive) return;
   const T = curT(); if (T.shield) d *= Math.pow(.7, T.shield);
   player.hp -= d; player.invuln = .45; player.hurtT = 0;
-  dmgText(player.pos.clone().add(new V3(0, 2.3, 0)), '-' + Math.round(d), '#ff6b6b', 20);
+  dmgText(eyePos().addScaledVector(lookDir(), 2).add(new V3(0, -.3, 0)), '-' + Math.round(d), '#ff6b6b', 22);
   sfx(160, .18, 'sawtooth', .06, .5);
   const h = document.getElementById('hurt'); h.style.opacity = .8; setTimeout(() => h.style.opacity = 0, 150);
   if (player.hp <= 0) die();
 }
 function die() {
-  alive = false; player.hp = 0;
+  alive = false; player.hp = 0; attackHeld = false;
+  if (locked()) document.exitPointerLock();
   document.getElementById('deadText').innerHTML = `You survived until <b>day ${dayNum}</b> and defeated <b>${player.kills}</b> monsters.<br>You keep your items. Ready for another go?`;
   document.getElementById('deadScreen').style.display = 'flex';
 }
@@ -659,6 +680,7 @@ document.getElementById('respawnBtn').onclick = () => {
   for (const m of monsters) scene.remove(m.g); monsters.length = 0;
   player.pos.set(0, getH(0, 0) + 1, 0); player.vy = 0; player.hp = player.max; alive = true; spawnTimer = 20;
   document.getElementById('deadScreen').style.display = 'none';
+  if (!isTouch) tryLock();
 };
 const curT = () => inv[sel] ? inv[sel].traits : {};
 
@@ -812,7 +834,7 @@ function fireProjectiles(st, T, dir) {
     const a = (k - (st.shots - 1) / 2) * .14;
     const d = dir.clone().applyAxisAngle(UP, a);
     const v = d.multiplyScalar(spd); v.y += grav * .25 + dir.y * spd * 0;
-    const pos = player.pos.clone().add(new V3(0, 1.4, 0)).addScaledVector(dir, .8);
+    const pos = eyePos().add(new V3(Math.cos(camYaw) * .25, -.25, -Math.sin(camYaw) * .25)).addScaledVector(dir, .8);
     const m = projMesh(st.ammo, ec); m.position.copy(pos);
     projs.push({ m, pos, v, grav, dmg: st.pdmg, T, life: 2.2, ammo: st.ammo, spin: st.ammo === 'rock' || st.ammo === 'bomb' });
   }
@@ -843,16 +865,18 @@ function attack() {
   const it = inv[sel], T = curT();
   if (isConsumable(it)) {
     const heal = 30 * T.potion; player.hp = Math.min(player.max, player.hp + heal); inv[sel] = null; renderInv();
-    dmgText(player.pos.clone().add(new V3(0, 2.3, 0)), '+' + heal, '#6bff8a', 22); burst(player.pos.clone().add(new V3(0, 1, 0)), 0x6bff8a, 16, 3, .8, -2);
+    dmgText(eyePos().addScaledVector(lookDir(), 2), '+' + heal, '#6bff8a', 24); burst(player.pos.clone().add(new V3(0, 1, 0)), 0x6bff8a, 16, 3, .8, -2);
     sfx(500, .25, 'sine', .06, 2); player.cd = .5; return;
   }
   const st = itemStats(it); player.cd = st.cd;
-  const target = nearestMonster(player.pos, st.ranged ? 34 : 7);
-  if (target) player.yaw = Math.atan2(target.x - player.pos.x, target.z - player.pos.z);
-  const f = new V3(Math.sin(player.yaw), 0, Math.cos(player.yaw));
+  // aim assist: pick the monster closest to the crosshair
+  const eye = eyePos(), look = lookDir(); let target = null, best = .965;
+  for (const m of monsters) { if (m.dead) continue; const v = mCenter(m).sub(eye), d = v.length(); if (d > (st.ranged ? 40 : 8)) continue;
+    const dot = v.divideScalar(d).dot(look); if (dot > best) { best = dot; target = m; } }
+  const f = new V3(look.x, 0, look.z).normalize();
   if (st.melee) {
     player.swingT = .3; sfx(st.punch ? 180 : 260, .09, 'triangle', .04, .5);
-    const ec = elemColor(T); const tip = player.pos.clone().add(new V3(0, 1.2, 0)).addScaledVector(f, st.reach * .7);
+    const ec = elemColor(T); const tip = eye.clone().add(new V3(0, -.3, 0)).addScaledVector(look, 1.6);
     if (ec) burst(tip, ec, 10, 4, .35, 0); else burst(tip, 0xffffff, 4, 3, .2, 0, .6);
     for (const m of monsters.slice()) { if (m.dead) continue; const dx = m.x - player.pos.x, dz = m.z - player.pos.z, d = Math.hypot(dx, dz);
       if (d > st.reach + m.r || Math.abs(mCenter(m).y - player.pos.y - 1) > 2.2) continue;
@@ -861,8 +885,8 @@ function attack() {
   }
   if (st.ranged) {
     player.aimT = .3;
-    let dir = f.clone();
-    if (target) { const c = mCenter(target); dir = c.sub(player.pos.clone().add(new V3(0, 1.4, 0))); const hd = Math.hypot(dir.x, dir.z); dir.y = clamp(dir.y / hd, -.5, .5) * hd; dir.normalize(); }
+    let dir = look.clone();
+    if (target) dir = mCenter(target).sub(eye).normalize();
     fireProjectiles(st, T, dir);
   }
 }
@@ -892,7 +916,8 @@ function resolveCollisions(p, r, h = 1.8) {
 const keys = {};
 let attackHeld = false, jumpHeld = false;
 addEventListener('keydown', e => {
-  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
+  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'Tab'].includes(e.code)) e.preventDefault();
+  if ((e.code === 'Tab' || e.code === 'KeyI') && locked()) document.exitPointerLock();
   if (keys[e.code]) return; keys[e.code] = true;
   if (state !== 'play') return;
   if (e.code === 'Space') { jump(); jumpHeld = true; }
@@ -902,16 +927,32 @@ addEventListener('keydown', e => {
 });
 addEventListener('keyup', e => { keys[e.code] = false; if (e.code === 'Space') jumpHeld = false; if (e.code === 'KeyF' || e.code === 'KeyJ' || e.code === 'Enter') attackHeld = false; });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; attackHeld = jumpHeld = false; });
-let camYaw = Math.PI, camPitch = .45, camDist = 11;
+let camYaw = Math.PI, camPitch = 0;
 const cv = renderer.domElement; let camDrag = null;
-cv.addEventListener('pointerdown', e => { if (camDrag) return; camDrag = { id: e.pointerId, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, moved: false }; cv.setPointerCapture(e.pointerId); });
+const locked = () => document.pointerLockElement === cv;
+const lockHint = document.getElementById('lockHint');
+document.addEventListener('pointerlockchange', () => { if (!locked()) attackHeld = false; updateLockHint(); });
+function updateLockHint() { lockHint.style.display = (!isTouch && state === 'play' && alive && !locked()) ? 'block' : 'none'; }
+function tryLock() { try { const p = cv.requestPointerLock(); if (p && p.catch) p.catch(() => { }); } catch (e) { } }
+document.addEventListener('mousemove', e => { if (!locked()) return;
+  camYaw -= e.movementX * .0024; camPitch = clamp(camPitch - e.movementY * .0024, -1.45, 1.45); });
+cv.addEventListener('pointerdown', e => {
+  if (e.pointerType === 'mouse') {
+    if (state !== 'play' || !alive) return;
+    if (!locked()) { tryLock(); return; }
+    if (e.button === 0) { attackHeld = true; attack(); }
+    return;
+  }
+  if (camDrag) return; camDrag = { id: e.pointerId, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, moved: false }; cv.setPointerCapture(e.pointerId); });
 cv.addEventListener('pointermove', e => { if (!camDrag || e.pointerId !== camDrag.id) return;
   const dx = e.clientX - camDrag.x, dy = e.clientY - camDrag.y; camDrag.x = e.clientX; camDrag.y = e.clientY;
   if (Math.hypot(e.clientX - camDrag.sx, e.clientY - camDrag.sy) > 8) camDrag.moved = true;
-  camYaw -= dx * .007; camPitch = clamp(camPitch + dy * .005, .08, 1.25); });
-const camUp = e => { if (!camDrag || e.pointerId !== camDrag.id) return; if (!camDrag.moved && state === 'play') attack(); camDrag = null; };
+  camYaw -= dx * .006; camPitch = clamp(camPitch - dy * .005, -1.45, 1.45); });
+const camUp = e => {
+  if (e.pointerType === 'mouse') { if (e.button === 0) attackHeld = false; return; }
+  if (!camDrag || e.pointerId !== camDrag.id) return; if (!camDrag.moved && state === 'play') attack(); camDrag = null; };
 cv.addEventListener('pointerup', camUp); cv.addEventListener('pointercancel', e => { if (camDrag && e.pointerId === camDrag.id) camDrag = null; });
-cv.addEventListener('wheel', e => { camDist = clamp(camDist + e.deltaY * .01, 5, 22); }, { passive: true });
+addEventListener('wheel', e => { if (state !== 'play') return; select((sel + (e.deltaY > 0 ? 1 : 9)) % 10); }, { passive: true });
 cv.addEventListener('contextmenu', e => e.preventDefault());
 // touch joystick + buttons
 const joy = document.getElementById('joy'), knob = document.getElementById('knob'); let joyVec = { x: 0, y: 0 }, joyId = null;
@@ -1011,7 +1052,7 @@ function update(dt) {
       P.x += f[0] * 30 * dt; P.z += f[1] * 30 * dt; if (rand() < .7) burst(P.clone().add(new V3(0, 1, 0)), 0xffa040, 2, 1, .3, 0); }
     P.x += mvx * speed * dt; P.z += mvz * speed * dt;
     const ml = Math.hypot(mvx, mvz);
-    if (ml > .05 && player.swingT <= 0 && player.aimT <= 0) { const ty = Math.atan2(mvx, mvz); let d = ty - player.yaw; d = Math.atan2(Math.sin(d), Math.cos(d)); player.yaw += d * Math.min(1, dt * 12); }
+    player.yaw = Math.atan2(fwdX, fwdZ);
     resolveCollisions(P, .45);
     P.x = clamp(P.x, -HALF + 8, HALF - 8); P.z = clamp(P.z, -HALF + 8, HALF - 8);
     // vertical
@@ -1030,19 +1071,19 @@ function update(dt) {
     const sw = Math.sin(player.walk) * .7 * Math.min(1, ml * 2);
     pm.legs[0].rotation.x = sw; pm.legs[1].rotation.x = -sw;
     pm.arms[0].rotation.x = -sw * .8;
-    if (player.swingT > 0) { player.swingT -= dt; const k = 1 - player.swingT / .3; pm.arms[1].rotation.x = lerp(-2.7, -.2, smooth(0, 1, k)); pm.arms[1].rotation.z = .3 * (1 - k); }
-    else if (player.aimT > 0) { player.aimT -= dt; pm.arms[1].rotation.x = -Math.PI / 2; pm.arms[1].rotation.z = 0; }
-    else { pm.arms[1].rotation.x = sw * .8 - .3; pm.arms[1].rotation.z = 0; }
-    pm.g.position.copy(P); pm.g.position.y += player.onGround ? Math.abs(Math.sin(player.walk)) * .06 * Math.min(1, ml) : 0;
-    pm.g.rotation.y = player.yaw;
-    pm.g.visible = !(player.invuln > 0 && Math.floor(player.invuln * 20) % 2);
+    // first-person viewmodel animation
+    const bobA = player.onGround ? Math.min(1, ml) : 0;
+    let rx = -1.0, rz = 0, px = .42, py = -.42 + Math.abs(Math.sin(player.walk)) * .04 * bobA, pz = -.75;
+    px += Math.sin(player.walk * .5) * .025 * bobA;
+    if (player.swingT > 0) { player.swingT -= dt; const k = smooth(0, 1, 1 - player.swingT / .3); rx = lerp(.15, -1.9, k); rz = lerp(-.5, .4, k); px = lerp(.5, .2, k); }
+    else if (player.aimT > 0) { player.aimT -= dt; rx = -1.45; px = .3; py = -.32; pz = -.8 + Math.max(0, player.aimT - .2) * 1.5; }
+    vm.rotation.x = lerp(vm.rotation.x, rx, player.swingT > 0 ? 1 : Math.min(1, dt * 14)); vm.rotation.z = rz;
+    vm.position.set(lerp(vm.position.x, px, Math.min(1, dt * 14)), py, pz);
+    pm.g.visible = false;
     if (pm.held && pm.held.userData.glow) pm.held.userData.glow.scale.setScalar(1 + Math.sin(playTime * 12) * .15);
     // chests
     for (const c of chests) { if (!c.open && Math.hypot(c.x - P.x, c.z - P.z) < 1.9 && Math.abs(c.y - P.y) < 2) openChest(c);
       if (c.open && c.t < 1) { c.t = Math.min(1, c.t + dt * 3); c.lid.rotation.x = -1.9 * smooth(0, 1, c.t); } }
-    // roofs
-    for (const h of houses) h.roof.visible = !(Math.abs(P.x - h.x) < h.half && Math.abs(P.z - h.z) < h.half);
-    for (const c of caves) c.roof.visible = Math.hypot(P.x - c.x, P.z - c.z) > c.r + .5;
     // spawn monsters
     spawnTimer -= dt;
     const maxM = Math.min(36, (5 + dayNum * 3) * (isNight ? 1.7 : 1));
@@ -1060,10 +1101,12 @@ function update(dt) {
 }
 const camTarget = new V3();
 function updateCamera(dt) {
-  camTarget.lerp(new V3(player.pos.x, player.pos.y + 1.6, player.pos.z), 1 - Math.pow(.0005, dt));
-  const cx = camTarget.x + Math.sin(camYaw) * Math.cos(camPitch) * camDist, cz = camTarget.z + Math.cos(camYaw) * Math.cos(camPitch) * camDist;
-  let cy = camTarget.y + Math.sin(camPitch) * camDist; cy = Math.max(cy, getH(cx, cz) + 1, WATER + .5);
-  camera.position.set(cx, cy, cz); camera.lookAt(camTarget);
+  const P = player.pos, moving = (keys.KeyW || keys.KeyS || keys.KeyA || keys.KeyD || keys.ArrowUp || keys.ArrowDown || keys.ArrowLeft || keys.ArrowRight || joyVec.x || joyVec.y) && player.onGround ? 1 : 0;
+  const bob = moving * Math.sin(player.walk) * .05;
+  camera.position.set(P.x, P.y + 1.6 + bob, P.z);
+  camera.rotation.set(camPitch, camYaw, 0, 'YXZ');
+  // viewmodel lighting follows the time of day
+  vmHemi.intensity = hemi.intensity * .9; vmDir.intensity = .2 + skyLight.intensity * .5; vmDir.color.copy(skyLight.color);
 }
 
 // ============================================================ boot
@@ -1074,7 +1117,10 @@ function loop(now) {
   if (state === 'play') update(dt);
   else if (state === 'menu') { camYaw += dt * .1; updateSky(0); playTime += dt; }
   updateCamera(state === 'menu' ? 1 : dt);
+  renderer.clear();
   renderer.render(scene, camera);
+  if (state === 'play' && alive) { renderer.clearDepth(); renderer.render(vmScene, vmCam); }
+  updateLockHint();
 }
 function generate() {
   buildTerrain();
@@ -1096,7 +1142,8 @@ function generate() {
 }
 document.getElementById('playBtn').onclick = () => {
   try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { }
-  document.getElementById('startScreen').style.display = 'none'; state = 'play'; camYaw = Math.PI; last = performance.now();
+  document.getElementById('startScreen').style.display = 'none'; state = 'play'; camYaw = Math.PI; camPitch = 0; last = performance.now();
+  if (!isTouch) tryLock();
   toast('Grab the 🏹 and 🗡️ nearby, then drag one item onto another to merge!', 4500);
 };
 requestAnimationFrame(loop);
