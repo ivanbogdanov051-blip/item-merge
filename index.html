@@ -5,10 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Merge Quest</title>
 <style>
-  :root { --slot: min(54px, calc((100vw - 80px) / 11)); }
+  :root { --slot: min(54px, calc((100vw - 80px) / 11), 11vh); }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1433; font-family: "Segoe UI", system-ui, sans-serif; color: #fff; user-select: none; -webkit-user-select: none; touch-action: none; }
-  canvas#game { position: fixed; inset: 0; display: block; }
+  canvas#game { position: fixed; inset: 0; display: block; width: 100% !important; height: 100% !important; }
   #top { position: fixed; top: 8px; left: 0; right: 0; display: flex; flex-direction: column; align-items: center; pointer-events: none; z-index: 5; }
   #inv { display: flex; gap: 4px; padding: 5px; background: rgba(20,24,40,.55); border-radius: 12px; backdrop-filter: blur(4px); pointer-events: auto; }
   .slot { width: var(--slot); height: var(--slot); border-radius: 9px; background: rgba(255,255,255,.08); border: 2px solid rgba(255,255,255,.18); position: relative; touch-action: none; cursor: grab; }
@@ -50,25 +50,52 @@
   #bJump { width: 60px; height: 60px; right: 96px; bottom: 4px; }
   #bDash { width: 56px; height: 56px; right: 14px; bottom: 98px; }
   #help { position: fixed; left: 10px; bottom: 8px; font-size: 12px; opacity: .65; z-index: 5; text-shadow: 0 1px 2px #000; }
-  .screen { position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column; align-items: center; justify-content: center; background: radial-gradient(ellipse at center, rgba(20,30,70,.55), rgba(5,8,20,.85)); text-align: center; padding: 16px; }
+  /* full-screen menus scroll when they don't fit (small phones), so the buttons are always reachable */
+  .screen { position: fixed; inset: 0; z-index: 30; overflow-y: auto; -webkit-overflow-scrolling: touch; touch-action: pan-y; background: radial-gradient(ellipse at center, rgba(20,30,70,.55), rgba(5,8,20,.85)); text-align: center; }
+  #settings { background: rgba(8,12,28,.95); z-index: 40; }
+  .screen .panel { min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 16px; }
+  .screen .row { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+  .screen button.sec { background: rgba(255,255,255,.16); font-size: 16px; padding: 10px 22px; box-shadow: none; }
+  .setg { display: flex; flex-direction: column; gap: 6px; width: min(380px, 90vw); text-align: left; background: rgba(255,255,255,.07); padding: 14px 16px; border-radius: 12px; margin-bottom: 16px; }
+  .setg label { font-weight: 600; margin-top: 6px; }
+  .setg label span { color: #ffd86b; float: right; }
+  .setg input[type=range] { width: 100%; accent-color: #ffb347; touch-action: pan-x; }
+  .setg select { font-size: 15px; padding: 6px; border-radius: 8px; }
+  .setg button { margin-top: 10px; }
+  #gearBtn { position: absolute; right: 4px; top: 3px; background: rgba(255,255,255,.12); border: none; border-radius: 8px; font-size: 16px; cursor: pointer; padding: 2px 6px; color: #fff; }
+  #rotateHint { position: fixed; left: 50%; bottom: 40%; transform: translateX(-50%); z-index: 31; background: rgba(20,24,40,.85); padding: 8px 14px; border-radius: 14px; font-size: 13px; font-weight: 600; pointer-events: none; display: none; white-space: nowrap; }
   .screen h1 { font-size: clamp(38px, 9vw, 72px); margin: 0; letter-spacing: 2px; background: linear-gradient(90deg,#ffd86b,#ff7ab8,#7cd4ff); -webkit-background-clip: text; background-clip: text; color: transparent; filter: drop-shadow(0 4px 10px #0008); }
   .screen p { max-width: 560px; line-height: 1.5; opacity: .92; }
   .screen button { font-size: 22px; font-weight: 700; padding: 12px 42px; border-radius: 30px; border: none; background: linear-gradient(90deg,#ffb347,#ff6f91); color: #fff; cursor: pointer; box-shadow: 0 6px 20px #0006; }
   .screen button:disabled { opacity: .5; }
   .ctl { display: grid; grid-template-columns: auto auto; gap: 4px 14px; font-size: 14px; text-align: left; background: rgba(255,255,255,.07); padding: 10px 16px; border-radius: 12px; margin-bottom: 18px; }
   .ctl b { color: #ffd86b; }
-  @media (max-width: 640px) { #minimap { width: 92px; height: 92px; } #stats { font-size: 11px; min-width: 120px; } #help { display: none; } }
+  /* phones & small windows: compact HUD so more of the world is visible */
+  @media (max-width: 640px), (max-height: 520px) {
+    #minimap { width: 84px; height: 84px; } #stats { font-size: 11px; min-width: 112px; padding: 5px 8px; } #coins { font-size: 13px !important; } #hpbar { height: 8px; }
+    #help { display: none; } .toast { font-size: 12px; padding: 6px 12px; } #info { font-size: 11px; } #info .nm { font-size: 13px; }
+    #abil { font-size: 11px; bottom: 6px; padding: 3px 10px; }
+    #joy { width: 110px; height: 110px; left: 16px; bottom: 16px; } #knob { left: 30px; top: 30px; }
+    #btns { transform: scale(.82); transform-origin: bottom right; right: 12px; bottom: 12px; }
+    #toasts { top: 36%; }
+  }
+  @media (max-height: 520px) {
+    .screen h1 { font-size: 34px; } .screen p { font-size: 12px; margin: 6px 0; } .ctl { font-size: 11px; padding: 6px 12px; margin-bottom: 10px; }
+    .screen button { font-size: 18px; padding: 9px 30px; }
+  }
 </style>
 </head>
 <body>
 <div id="top"><div id="inv"></div><div id="info"></div></div>
 <div id="stats">
-  <div id="clock">☀️ Day 1</div>
+  <div id="clock" style="margin-right:30px">☀️ Day 1</div>
   <div id="hpbar"><div id="hpfill"></div></div>
   <div id="hptext">100 / 100</div>
   <div id="coins" style="font-size:16px;font-weight:800;color:#ffd84a">🪙 0</div>
   <div id="kills">⚔️ 0 &nbsp; 📖 0 items</div>
+  <button id="gearBtn" type="button" title="Settings">⚙️</button>
 </div>
+<div id="rotateHint">📱 Turn your phone sideways to see more</div>
 <canvas id="minimap" width="130" height="130"></canvas>
 <div id="toasts"></div>
 <div id="ghost"><img alt=""><div></div></div>
@@ -78,9 +105,9 @@
 <div id="joy"><div id="knob"></div></div>
 <div id="btns"><div class="btn" id="bAtk">⚔️</div><div class="btn" id="bJump">⤒</div><div class="btn" id="bDash">🚀</div><div class="btn" id="bAbil">✨</div></div>
 <div id="abil"></div>
-<div id="help">WASD/Arrows move · Mouse look · Click/F attack · Space jump · Shift dash · Wheel/1-0 select · Esc/Tab → free mouse, drag item onto item to MERGE</div>
+<div id="help">WASD/Arrows move · Mouse look · Click/F attack · Space jump · Shift dash · Wheel/1-0 select · Esc/Tab → free mouse, drag item onto item to MERGE · ⚙️ settings</div>
 
-<div class="screen" id="startScreen">
+<div class="screen" id="startScreen"><div class="panel">
   <h1>MERGE QUEST</h1>
   <p>Explore a random world, loot chests in houses, caves, pits and peaks, and <b>drag one item onto another to merge them</b> into something brand new.
      Bow + Stick = a bow that shoots sticks. Sword + Fire = Flaming Sword. 36 items, endless fusions — every fusion looks different!<br>
@@ -97,13 +124,26 @@
     <b>Sell</b><span>Drag an item onto the 💰 SELL slot</span>
     <b>Super rare</b><span>🌈 rainbow-framed items: Right-click / R / ✨ for a special ability</span>
   </div>
-  <button id="playBtn" disabled>Generating world…</button>
-</div>
-<div class="screen" id="deadScreen" style="display:none">
+  <div class="row"><button id="playBtn" disabled>Generating world…</button><button id="startSettings" class="sec" type="button">⚙️ Settings</button></div>
+</div></div>
+<div class="screen" id="deadScreen" style="display:none"><div class="panel">
   <h1>Defeated!</h1>
   <p id="deadText"></p>
   <button id="respawnBtn">Respawn</button>
-</div>
+</div></div>
+<div class="screen" id="settings" style="display:none"><div class="panel">
+  <h1 style="font-size:40px">Settings</h1>
+  <div class="setg">
+    <label for="sBright">☀️ Brightness <span id="vBright"></span></label>
+    <input type="range" id="sBright" min="0.4" max="1.5" step="0.05">
+    <label for="sSens">👀 Look speed <span id="vSens"></span></label>
+    <input type="range" id="sSens" min="0.3" max="3" step="0.1">
+    <label for="sTouch">📱 Touch controls (joystick &amp; buttons)</label>
+    <select id="sTouch"><option value="auto">Automatic</option><option value="on">Always show</option><option value="off">Hide</option></select>
+    <button id="fsBtn" class="sec" type="button">⛶ Fullscreen — best on phones, turn sideways</button>
+  </div>
+  <button id="closeSettings" type="button">Back</button>
+</div></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
@@ -117,7 +157,12 @@ function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; le
 const rand = mulberry32(Math.floor(Math.random() * 1e9));
 const R = (a, b) => a + rand() * (b - a);
 const pick = arr => arr[Math.floor(rand() * arr.length)];
-const isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+// phones/tablets: a coarse (finger) pointer. Laptops with touchscreens keep mouse controls until you actually touch the screen.
+const autoTouch = matchMedia('(pointer: coarse)').matches || (navigator.maxTouchPoints > 0 && !matchMedia('(pointer: fine)').matches);
+let isTouch = autoTouch;
+const settings = { bright: 1, sens: 1, touch: 'auto' };
+try { Object.assign(settings, JSON.parse(localStorage.getItem('mq-settings') || '{}')); } catch (e) { }
+function saveSettings() { try { localStorage.setItem('mq-settings', JSON.stringify(settings)); } catch (e) { } }
 
 // gradient noise
 const PERM = new Uint8Array(512), GX = new Float32Array(256), GY = new Float32Array(256);
@@ -140,6 +185,8 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, isTouch ? 1.5 : 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping; // softer, less blown-out colours (brightness slider = exposure)
+renderer.toneMappingExposure = settings.bright;
 renderer.domElement.id = 'game';
 document.body.prepend(renderer.domElement);
 const scene = new THREE.Scene();
@@ -154,7 +201,17 @@ const vmHemi = new THREE.HemisphereLight(0xffffff, 0x556644, 0.8); vmScene.add(v
 const vmDir = new THREE.DirectionalLight(0xffffff, 0.7); vmDir.position.set(1, 2, 1.5); vmScene.add(vmDir);
 const vm = new THREE.Group(); vm.position.set(.42, -.42, -.75); vmScene.add(vm);
 const vmHand = new THREE.Group(); vm.add(vmHand);
-addEventListener('resize', () => { camera.aspect = vmCam.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); vmCam.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+// Keep roughly the same SIDEWAYS view on every screen: narrow/portrait screens get a taller field of view,
+// so a phone shows about as much of the world as a computer does.
+let fitW = 0, fitH = 0;
+function fitView() {
+  fitW = innerWidth; fitH = innerHeight;
+  const a = innerWidth / innerHeight;
+  const vfov = clamp(2 * Math.atan(Math.tan(46 * Math.PI / 180) / a) * 180 / Math.PI, 60, 100);
+  camera.fov = vmCam.fov = vfov; camera.aspect = vmCam.aspect = a;
+  camera.updateProjectionMatrix(); vmCam.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight);
+}
+addEventListener('resize', fitView); addEventListener('orientationchange', () => setTimeout(fitView, 200)); fitView();
 
 const hemi = new THREE.HemisphereLight(0xcfe8ff, 0x4a5a2a, 0.7); scene.add(hemi);
 const ambient = new THREE.AmbientLight(0xffffff, 0.12); scene.add(ambient);
@@ -876,7 +933,7 @@ function die() {
   alive = false; player.hp = 0; attackHeld = false;
   if (locked()) document.exitPointerLock();
   document.getElementById('deadText').innerHTML = `You survived until <b>day ${dayNum}</b> and defeated <b>${player.kills}</b> monsters.<br>You keep your items. Ready for another go?`;
-  document.getElementById('deadScreen').style.display = 'flex';
+  document.getElementById('deadScreen').style.display = 'block';
 }
 document.getElementById('respawnBtn').onclick = () => {
   for (const m of monsters) scene.remove(m.g); monsters.length = 0; clearEProjs();
@@ -1271,51 +1328,101 @@ addEventListener('keydown', e => {
   const m = e.code.match(/^Digit(\d)$/); if (m) select((+m[1] + 9) % 10);
 });
 addEventListener('keyup', e => { keys[e.code] = false; if (e.code === 'Space') jumpHeld = false; if (e.code === 'KeyF' || e.code === 'KeyJ' || e.code === 'Enter') attackHeld = false; });
-addEventListener('blur', () => { for (const k in keys) keys[k] = false; attackHeld = jumpHeld = false; });
+// release everything when the tab/frame loses focus, so nothing stays "stuck"
+function releaseAll() { for (const k in keys) keys[k] = false; attackHeld = jumpHeld = false; camDrag = null;
+  if (typeof joyEnd === 'function' && joyId !== null) joyEnd({ pointerId: joyId }); }
+addEventListener('blur', releaseAll);
+document.addEventListener('visibilitychange', () => { if (document.hidden) releaseAll(); });
+addEventListener('pointerdown', () => { try { window.focus(); } catch (e) { } }, true); // keyboard keeps working inside an embedded frame
 let camYaw = Math.PI, camPitch = 0;
 const cv = renderer.domElement; let camDrag = null;
 const locked = () => document.pointerLockElement === cv;
 const lockHint = document.getElementById('lockHint');
-document.addEventListener('pointerlockchange', () => { if (!locked()) attackHeld = false; updateLockHint(); });
-function updateLockHint() { lockHint.style.display = (!isTouch && state === 'play' && alive && !locked()) ? 'block' : 'none'; }
-function tryLock() { try { const p = cv.requestPointerLock(); if (p && p.catch) p.catch(() => { }); } catch (e) { } }
+// mouse capture can be blocked (e.g. inside some embedded pages) -> fall back to "hold & drag to look"
+let lockWorked = false, lockFailed = false;
+document.addEventListener('pointerlockchange', () => { if (locked()) lockWorked = true; else attackHeld = false; updateLockHint(); });
+document.addEventListener('pointerlockerror', () => { if (!lockWorked && !lockFailed) { lockFailed = true; toast('🖱️ Mouse capture isn\'t available here — hold the mouse button and drag to look around', 4000); } updateLockHint(); });
+function updateLockHint() { lockHint.style.display = (!isTouch && !lockFailed && state === 'play' && alive && !locked()) ? 'block' : 'none'; }
+function tryLock() { if (lockFailed) return; try { const p = cv.requestPointerLock(); if (p && p.catch) p.catch(() => { if (!lockWorked) { lockFailed = true; updateLockHint(); } }); } catch (e) { lockFailed = true; } }
 document.addEventListener('mousemove', e => { if (!locked()) return;
-  camYaw -= e.movementX * .0024; camPitch = clamp(camPitch - e.movementY * .0024, -1.45, 1.45); });
+  camYaw -= e.movementX * .0024 * settings.sens; camPitch = clamp(camPitch - e.movementY * .0024 * settings.sens, -1.45, 1.45); });
 cv.addEventListener('pointerdown', e => {
+  if (e.pointerType === 'touch' && !isTouch && settings.touch === 'auto') setTouchUI(true); // touchscreen detected
   if (e.pointerType === 'mouse') {
     if (state !== 'play' || !alive) return;
-    if (!locked()) { tryLock(); return; }
+    if (locked()) { if (e.button === 2) useAbility(); else if (e.button === 0) { attackHeld = true; attack(); } return; }
+    if (!lockFailed) { tryLock(); return; }
     if (e.button === 2) { useAbility(); return; }
-    if (e.button === 0) { attackHeld = true; attack(); }
-    return;
   }
-  if (camDrag) return; camDrag = { id: e.pointerId, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, moved: false }; cv.setPointerCapture(e.pointerId); });
+  // drag to look (touch, pen, or mouse when capture is unavailable). A new finger always takes over, so it can never get stuck.
+  camDrag = { id: e.pointerId, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, moved: false };
+  try { cv.setPointerCapture(e.pointerId); } catch (err) { } });
 cv.addEventListener('pointermove', e => { if (!camDrag || e.pointerId !== camDrag.id) return;
   const dx = e.clientX - camDrag.x, dy = e.clientY - camDrag.y; camDrag.x = e.clientX; camDrag.y = e.clientY;
   if (Math.hypot(e.clientX - camDrag.sx, e.clientY - camDrag.sy) > 8) camDrag.moved = true;
-  camYaw -= dx * .006; camPitch = clamp(camPitch - dy * .005, -1.45, 1.45); });
+  camYaw -= dx * .006 * settings.sens; camPitch = clamp(camPitch - dy * .005 * settings.sens, -1.45, 1.45); });
 const camUp = e => {
-  if (e.pointerType === 'mouse') { if (e.button === 0) attackHeld = false; return; }
+  if (e.pointerType === 'mouse' && (locked() || !camDrag)) { if (e.button === 0) attackHeld = false; return; }
   if (!camDrag || e.pointerId !== camDrag.id) return; if (!camDrag.moved && state === 'play') attack(); camDrag = null; };
-cv.addEventListener('pointerup', camUp); cv.addEventListener('pointercancel', e => { if (camDrag && e.pointerId === camDrag.id) camDrag = null; });
+const camEnd = e => { if (camDrag && e.pointerId === camDrag.id) camDrag = null; };
+cv.addEventListener('pointerup', camUp); cv.addEventListener('pointercancel', camEnd); cv.addEventListener('lostpointercapture', camEnd);
 addEventListener('wheel', e => { if (state !== 'play') return; select((sel + (e.deltaY > 0 ? 1 : 9)) % 10); }, { passive: true });
 cv.addEventListener('contextmenu', e => e.preventDefault());
 // touch joystick + buttons
 const joy = document.getElementById('joy'), knob = document.getElementById('knob'); let joyVec = { x: 0, y: 0 }, joyId = null;
-if (isTouch) { joy.style.display = 'block'; document.getElementById('btns').style.display = 'block'; }
 function joyMove(e) { const r = joy.getBoundingClientRect(); let dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2); const d = Math.hypot(dx, dy), mx = 50; if (d > mx) { dx *= mx / d; dy *= mx / d; }
   joyVec = { x: dx / mx, y: dy / mx }; knob.style.transform = `translate(${dx}px,${dy}px)`; }
-joy.addEventListener('pointerdown', e => { e.preventDefault(); joyId = e.pointerId; joy.setPointerCapture(e.pointerId); joyMove(e); });
+joy.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); joyId = e.pointerId; try { joy.setPointerCapture(e.pointerId); } catch (err) { } joyMove(e); });
 joy.addEventListener('pointermove', e => { if (e.pointerId === joyId) joyMove(e); });
 const joyEnd = e => { if (e.pointerId !== joyId) return; joyId = null; joyVec = { x: 0, y: 0 }; knob.style.transform = ''; };
-joy.addEventListener('pointerup', joyEnd); joy.addEventListener('pointercancel', joyEnd);
+joy.addEventListener('pointerup', joyEnd); joy.addEventListener('pointercancel', joyEnd); joy.addEventListener('lostpointercapture', joyEnd);
 function holdBtn(id, down, up) { const b = document.getElementById(id);
-  b.addEventListener('pointerdown', e => { e.preventDefault(); b.setPointerCapture(e.pointerId); b.classList.add('on'); down(); });
-  const u = () => { b.classList.remove('on'); if (up) up(); }; b.addEventListener('pointerup', u); b.addEventListener('pointercancel', u); }
+  b.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); try { b.setPointerCapture(e.pointerId); } catch (err) { } b.classList.add('on'); down(); });
+  const u = () => { if (!b.classList.contains('on')) return; b.classList.remove('on'); if (up) up(); };
+  b.addEventListener('pointerup', u); b.addEventListener('pointercancel', u); b.addEventListener('lostpointercapture', u); }
 holdBtn('bAtk', () => { attackHeld = true; attack(); }, () => attackHeld = false);
 holdBtn('bJump', () => { jump(); jumpHeld = true; }, () => jumpHeld = false);
 holdBtn('bDash', dash);
 holdBtn('bAbil', useAbility);
+
+// ============================================================ settings (brightness, look speed, touch controls, fullscreen)
+function setTouchUI(v) {
+  isTouch = v; joy.style.display = v ? 'block' : 'none'; document.getElementById('btns').style.display = v ? 'block' : 'none';
+  if (!v) { joyVec = { x: 0, y: 0 }; knob.style.transform = ''; joyId = null; }
+  updateRotateHint(); updateLockHint();
+}
+const rotateHint = document.getElementById('rotateHint');
+function updateRotateHint() { const d = (isTouch && state === 'play' && innerHeight > innerWidth * 1.1) ? 'block' : 'none'; if (rotateHint.style.display !== d) rotateHint.style.display = d; }
+addEventListener('resize', updateRotateHint);
+function applySettings() {
+  renderer.toneMappingExposure = settings.bright;
+  setTouchUI(settings.touch === 'on' ? true : settings.touch === 'off' ? false : autoTouch);
+  document.getElementById('vBright').textContent = Math.round(settings.bright * 100) + '%';
+  document.getElementById('vSens').textContent = settings.sens.toFixed(1) + '×';
+}
+const sB = document.getElementById('sBright'), sS = document.getElementById('sSens'), sT = document.getElementById('sTouch');
+sB.value = settings.bright; sS.value = settings.sens; sT.value = settings.touch;
+sB.oninput = () => { settings.bright = +sB.value; applySettings(); saveSettings(); };
+sS.oninput = () => { settings.sens = +sS.value; applySettings(); saveSettings(); };
+sT.onchange = () => { settings.touch = sT.value; applySettings(); saveSettings(); };
+let stateBeforeSettings = 'menu';
+function openSettings() {
+  if (state === 'settings') return; stateBeforeSettings = state; state = 'settings'; releaseAll();
+  if (locked()) document.exitPointerLock();
+  document.getElementById('settings').style.display = 'block';
+}
+function closeSettings() {
+  document.getElementById('settings').style.display = 'none'; state = stateBeforeSettings; last = performance.now();
+  if (state === 'play' && !isTouch) tryLock();
+}
+document.getElementById('gearBtn').onclick = openSettings;
+document.getElementById('startSettings').onclick = openSettings;
+document.getElementById('closeSettings').onclick = closeSettings;
+document.getElementById('fsBtn').onclick = async () => {
+  try { await (document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen).call(document.documentElement); }
+  catch (e) { toast('Fullscreen isn\'t available here — turn your phone sideways for the full view', 3500); return; }
+  try { await screen.orientation.lock('landscape'); } catch (e) { }
+};
 
 // ============================================================ day / night
 let tod = .06, dayNum = 1; const DAY_LEN = 300;
@@ -1327,10 +1434,11 @@ function updateSky(dt) {
   const sunDir = new V3(Math.cos(a), Math.sin(a), .35).normalize(), moonDir = new V3(-sunDir.x, -sunDir.y, sunDir.z);
   const sh = sunDir.y, dayF = smooth(-.18, .22, sh), setF = Math.exp(-sh * sh * 25) * smooth(-.25, 0, sh);
   cSky.copy(cNight).lerp(cDay, dayF).lerp(cSet, setF * .55);
+  cSky.multiplyScalar(.88 * clamp(settings.bright, .45, 1.15)); // sky follows the brightness setting too
   scene.background.copy(cSky); scene.fog.color.copy(cSky);
-  hemi.intensity = .38 + .42 * dayF; hemi.color.setHSL(.58, .5, .6 + .2 * dayF); ambient.intensity = .14 + .06 * (1 - dayF);
+  hemi.intensity = .34 + .36 * dayF; hemi.color.setHSL(.58, .5, .6 + .2 * dayF); ambient.intensity = .14 + .06 * (1 - dayF);
   const P = player.pos;
-  if (sh > -.05) { skyLight.position.copy(P).addScaledVector(sunDir, 200); skyLight.intensity = 1.05 * smooth(-.05, .2, sh); skyLight.color.setRGB(1, lerp(1, .7, setF), lerp(.95, .5, setF)); }
+  if (sh > -.05) { skyLight.position.copy(P).addScaledVector(sunDir, 200); skyLight.intensity = .95 * smooth(-.05, .2, sh); skyLight.color.setRGB(1, lerp(1, .7, setF), lerp(.95, .5, setF)); }
   else { skyLight.position.copy(P).addScaledVector(moonDir, 200); skyLight.intensity = .38 * smooth(-.05, -.3, sh); skyLight.color.setHex(0xa8bcff); }
   skyLight.target.position.copy(P);
   sun.position.copy(camera.position).addScaledVector(sunDir, 600); moon.position.copy(camera.position).addScaledVector(moonDir, 600); moon.lookAt(camera.position);
@@ -1489,12 +1597,14 @@ let last = performance.now();
 function loop(now) {
   requestAnimationFrame(loop);
   const dt = Math.min(.05, (now - last) / 1000); last = now;
+  if (innerWidth !== fitW || innerHeight !== fitH) fitView(); // catches size changes that don't fire 'resize' (phone address bars, embeds)
+  updateRotateHint();
   if (state === 'play') update(dt);
   else if (state === 'menu') { camYaw += dt * .1; updateSky(0); playTime += dt; }
   updateCamera(state === 'menu' ? 1 : dt);
   renderer.clear();
   renderer.render(scene, camera);
-  if (state === 'play' && alive) { renderer.clearDepth(); renderer.render(vmScene, vmCam); }
+  if (state !== 'menu' && alive) { renderer.clearDepth(); renderer.render(vmScene, vmCam); }
   updateLockHint();
 }
 function generate() {
@@ -1521,6 +1631,7 @@ document.getElementById('playBtn').onclick = () => {
   if (!isTouch) tryLock();
   toast('Grab the 🏹 and 🗡️ nearby, then drag one item onto another to merge!<br>You start with 🪙 30 — earn more by beating monsters at night.', 5000);
 };
+applySettings();
 requestAnimationFrame(loop);
 setTimeout(generate, 50);
 </script>
