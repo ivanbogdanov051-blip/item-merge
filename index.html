@@ -78,6 +78,7 @@
   .screen button:disabled { opacity: .5; }
   .ctl { display: grid; grid-template-columns: auto auto; gap: 4px 14px; font-size: 14px; text-align: left; background: rgba(255,255,255,.07); padding: 10px 16px; border-radius: 12px; margin-bottom: 18px; }
   .ctl b { color: #ffd86b; }
+  .ctl-more { margin-bottom: 18px; } .ctl-more summary { cursor: pointer; opacity: .75; font-size: 14px; margin-bottom: 8px; } .ctl-more .ctl { margin-bottom: 0; }
   /* phones & small windows: compact HUD so more of the world is visible */
   @media (max-width: 640px), (max-height: 520px) {
     #minimap { width: 84px; height: 84px; } #stats { font-size: 11px; min-width: 112px; padding: 5px 8px; } #coins { font-size: 13px !important; } #hpbar { height: 8px; }
@@ -113,25 +114,20 @@
 <div id="joy"><div id="knob"></div></div>
 <div id="btns"><div class="btn" id="bAtk">⚔️</div><div class="btn" id="bJump">⤒</div><div class="btn" id="bDash">🚀</div><div class="btn" id="bAbil">✨</div></div>
 <div id="abil"></div>
-<div id="help">WASD/Arrows move · Mouse look · Click/F attack · Space jump · Shift dash · Wheel/1-0 select · Esc/Tab → free mouse, drag item onto item to MERGE · ⚙️ settings</div>
+<div id="help">WASD move · Click attack · Esc → drag to merge</div>
 
 <div class="screen" id="startScreen"><div class="panel">
   <h1>MERGE QUEST</h1>
-  <p>Explore a random world, loot chests in houses, caves, pits and peaks, and <b>drag one item onto another to merge them</b> into something brand new.
-     Bow + Stick = a bow that shoots sticks. Sword + Fire = Flaming Sword. 36 items, endless fusions — every fusion looks different!<br>
-     🪙 Merging costs coins, which you earn by defeating monsters (stronger monsters drop more). Bigger items cost more to merge.<br>
-     ☀️ Days are safe: explore and merge. 🌙 Monsters only come out at night — and <b>every night they get much stronger</b>.</p>
+  <p>Loot items and <b>drag one onto another to merge</b> them.<br>☀️ Explore by day · 🌙 survive the night.</p>
+  <details class="ctl-more"><summary>Controls</summary>
   <div class="ctl">
-    <b>Move</b><span>WASD / Arrows · Joystick on phone</span>
-    <b>Attack / use</b><span>Click · F · ⚔️ button</span>
-    <b>Jump · Dash</b><span>Space · Shift (needs 🚀 item)</span>
-    <b>Look</b><span>Mouse (click to capture) · Drag screen on phone · Q / E</span>
-    <b>Select item</b><span>Mouse wheel · 1–0 · Tap a slot</span>
-    <b>Merge</b><span>Esc / Tab to free the mouse, then drag a slot onto another</span>
-    <b>Drop</b><span>Drag a slot down into the world</span>
-    <b>Sell</b><span>Drag an item onto the 💰 SELL slot</span>
-    <b>Super rare</b><span>🌈 rainbow-framed items: Right-click / R / ✨ for a special ability</span>
-  </div>
+    <b>Move</b><span>WASD · Joystick</span>
+    <b>Attack</b><span>Click · F · ⚔️</span>
+    <b>Jump · Dash</b><span>Space · Shift</span>
+    <b>Merge</b><span>Esc, then drag a slot onto another</span>
+    <b>Sell</b><span>Drag onto 💰</span>
+    <b>Ability</b><span>🌈 items: Right-click · R · ✨</span>
+  </div></details>
   <div class="row"><button id="playBtn" disabled>Generating world…</button><button id="startSettings" class="sec" type="button">⚙️ Settings</button></div>
 </div></div>
 <div class="screen" id="deadScreen" style="display:none"><div class="panel">
@@ -556,8 +552,15 @@ function drawIcon(it) {
 }
 function makeItem(traits, power, tier) {
   const it = { id: itemId++, traits, power, tier };
-  it.name = nameOf(traits, tier); it.canvas = drawIcon(it); it.icon = it.canvas.toDataURL(); return it;
+  it.name = nameOf(traits, tier);
+  // Icons depend only on traits + tier: draw each once, and only PNG-encode when the inventory shows it.
+  const key = tier + '|' + Object.keys(traits).sort().map(k => k + traits[k]).join(',');
+  let ic = iconCache.get(key); if (!ic) { ic = { canvas: drawIcon(it), url: null }; iconCache.set(key, ic); }
+  it.canvas = ic.canvas;
+  Object.defineProperty(it, 'icon', { get() { return ic.url || (ic.url = ic.canvas.toDataURL()); } });
+  return it;
 }
+const iconCache = new Map();
 const baseItem = k => makeItem({ [k]: 1 }, BASE[k].p, 1);
 function randomBaseKey() { const tot = Object.values(BASE).reduce((a, b) => a + b.w, 0); let r = rand() * tot; for (const k in BASE) { r -= BASE[k].w; if (r <= 0) return k; } return 'stick'; }
 function mergeTraits(a, b) { const t = Object.assign({}, a.traits); for (const k in b.traits) t[k] = (t[k] || 0) + b.traits[k]; return t; }
@@ -1637,7 +1640,7 @@ document.getElementById('playBtn').onclick = () => {
   try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { }
   document.getElementById('startScreen').style.display = 'none'; state = 'play'; camYaw = Math.PI; camPitch = 0; last = performance.now();
   if (!isTouch) tryLock();
-  toast('Grab the 🏹 and 🗡️ nearby, then drag one item onto another to merge!<br>You start with 🪙 30 — earn more by beating monsters at night.', 5000);
+  toast('Grab the 🏹 and 🗡️, then drag one onto the other!', 3500);
 };
 applySettings();
 requestAnimationFrame(loop);
