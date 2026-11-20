@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Merge Quest</title>
 <style>
-  :root { --slot: min(54px, calc((100vw - 64px) / 10)); }
+  :root { --slot: min(54px, calc((100vw - 80px) / 11)); }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1433; font-family: "Segoe UI", system-ui, sans-serif; color: #fff; user-select: none; -webkit-user-select: none; touch-action: none; }
   canvas#game { position: fixed; inset: 0; display: block; }
@@ -14,6 +14,12 @@
   .slot { width: var(--slot); height: var(--slot); border-radius: 9px; background: rgba(255,255,255,.08); border: 2px solid rgba(255,255,255,.18); position: relative; touch-action: none; cursor: grab; }
   .slot.sel { border-color: #ffe066; box-shadow: 0 0 10px #ffe06699; background: rgba(255,224,102,.15); }
   .slot.target { border-color: #7cf; box-shadow: 0 0 12px #7cf; transform: scale(1.08); }
+  .slot.sell { margin-left: 6px; border: 2px dashed #ffd84a; background: rgba(255,200,60,.14); display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: default; font-size: calc(var(--slot) * .4); line-height: 1; }
+  .slot.sell b { font-size: 9px; color: #ffd84a; letter-spacing: 1px; margin-top: 2px; }
+  .slot.sell.target { background: rgba(255,200,60,.4); border-style: solid; }
+  #abil { position: fixed; left: 50%; bottom: 30px; transform: translateX(-50%); z-index: 5; background: rgba(40,16,60,.75); border: 2px solid #ff9cff; padding: 5px 14px; border-radius: 16px; font-weight: 700; font-size: 14px; pointer-events: none; display: none; white-space: nowrap; }
+  #abil.cool { border-color: #776; opacity: .75; }
+  #bAbil { width: 56px; height: 56px; right: 92px; bottom: 82px; border-color: #ff9cff; display: none; }
   .slot img { width: 100%; height: 100%; border-radius: 7px; pointer-events: none; display: block; }
   .slot .k { position: absolute; left: 3px; top: 0; font-size: 10px; opacity: .7; text-shadow: 0 1px 2px #000; pointer-events: none; }
   #info { margin-top: 6px; max-width: min(420px, 92vw); padding: 6px 12px; background: rgba(20,24,40,.6); border-radius: 10px; font-size: 13px; text-align: center; display: none; }
@@ -70,7 +76,8 @@
 <div id="cross"></div>
 <div id="lockHint">🖱️ Click to look around &amp; fight<br><small>Esc / Tab frees the mouse to drag &amp; merge items</small></div>
 <div id="joy"><div id="knob"></div></div>
-<div id="btns"><div class="btn" id="bAtk">⚔️</div><div class="btn" id="bJump">⤒</div><div class="btn" id="bDash">🚀</div></div>
+<div id="btns"><div class="btn" id="bAtk">⚔️</div><div class="btn" id="bJump">⤒</div><div class="btn" id="bDash">🚀</div><div class="btn" id="bAbil">✨</div></div>
+<div id="abil"></div>
 <div id="help">WASD/Arrows move · Mouse look · Click/F attack · Space jump · Shift dash · Wheel/1-0 select · Esc/Tab → free mouse, drag item onto item to MERGE</div>
 
 <div class="screen" id="startScreen">
@@ -87,6 +94,8 @@
     <b>Select item</b><span>Mouse wheel · 1–0 · Tap a slot</span>
     <b>Merge</b><span>Esc / Tab to free the mouse, then drag a slot onto another</span>
     <b>Drop</b><span>Drag a slot down into the world</span>
+    <b>Sell</b><span>Drag an item onto the 💰 SELL slot</span>
+    <b>Super rare</b><span>🌈 rainbow-framed items: Right-click / R / ✨ for a special ability</span>
   </div>
   <button id="playBtn" disabled>Generating world…</button>
 </div>
@@ -377,14 +386,29 @@ const BASE = {
   knife: { e: '🔪', p: 7, w: 5 }, gem: { e: '💎', p: 5, w: 4 }, eye: { e: '🧿', p: 3, w: 4 }, skull: { e: '💀', p: 4, w: 3 },
   coins: { e: '💰', p: 2, w: 4 }, bell: { e: '🔔', p: 4, w: 4 }, web: { e: '🕸️', p: 3, w: 5 }, mirror: { e: '🪞', p: 2, w: 4 },
   meat: { e: '🍖', p: 2, w: 5 }, horn: { e: '📯', p: 3, w: 4 },
+  // --- SUPER RARE: very low drop chance, each gives a right-click ability (kept through fusions)
+  meteor: { e: '☄️', p: 8, w: .8, rare: true }, blink: { e: '🌀', p: 6, w: .8, rare: true }, dragon: { e: '🐉', p: 9, w: .8, rare: true },
+  nova: { e: '🧊', p: 7, w: .8, rare: true }, rainbow: { e: '🌈', p: 6, w: .8, rare: true }, storm: { e: '🌩️', p: 8, w: .8, rare: true },
+};
+const RARE_KEYS = Object.keys(BASE).filter(k => BASE[k].rare);
+const isRareT = t => Object.keys(t).some(k => BASE[k] && BASE[k].rare);
+const ABIL = {
+  meteor: { cd: 10, col: 0xff7a2a, name: 'Meteor Strike', desc: 'a meteor crashes down where you aim' },
+  blink: { cd: 4, col: 0x9a6bff, name: 'Blink', desc: 'teleport forward' },
+  dragon: { cd: 12, col: 0xff4a1a, name: 'Dragon Breath', desc: 'breathe fire for 2 seconds' },
+  nova: { cd: 15, col: 0x9fe8ff, name: 'Frost Nova', desc: 'freeze every enemy around you' },
+  rainbow: { cd: 25, col: 0xff70ff, name: 'Rainbow Blessing', desc: 'heal half your HP and become invincible' },
+  storm: { cd: 12, col: 0xfff26a, name: 'Thunderstorm', desc: 'lightning strikes many enemies at once' },
 };
 const NOUN = { sword: 'Sword', bow: 'Bow', wand: 'Wand', stick: 'Stick', rock: 'Rock', bomb: 'Bomb', fire: 'Fireball', ice: 'Ice Shard', spark: 'Spark', boots: 'Boots', rocket: 'Rocket', feather: 'Wings', shield: 'Shield', potion: 'Potion', magnet: 'Magnet', clover: 'Clover',
   axe: 'Axe', hammer: 'Hammer', trident: 'Trident', boomerang: 'Boomerang', poison: 'Spore', wind: 'Tornado', star: 'Star', heart: 'Heart', moon: 'Moon Charm', hourglass: 'Hourglass',
-  knife: 'Dagger', gem: 'Gem', eye: 'Evil Eye', skull: 'Skull', coins: 'Coin Bag', bell: 'Bell', web: 'Web', mirror: 'Mirror', meat: 'Meat', horn: 'Horn' };
+  knife: 'Dagger', gem: 'Gem', eye: 'Evil Eye', skull: 'Skull', coins: 'Coin Bag', bell: 'Bell', web: 'Web', mirror: 'Mirror', meat: 'Meat', horn: 'Horn',
+  meteor: 'Meteor Stone', blink: 'Portal Orb', dragon: 'Dragon Soul', nova: 'Frost Core', rainbow: 'Rainbow Charm', storm: 'Storm Cloud' };
 const ADJ = { sword: 'Bladed', bow: "Archer's", wand: 'Magic', stick: 'Wooden', rock: 'Heavy', bomb: 'Explosive', fire: 'Flaming', ice: 'Frost', spark: 'Thunder', boots: 'Swift', rocket: 'Rocket', feather: 'Winged', shield: 'Guardian', potion: 'Vampiric', magnet: 'Seeking', clover: 'Lucky',
   axe: 'Cleaving', hammer: 'Crushing', trident: 'Piercing', boomerang: 'Returning', poison: 'Toxic', wind: 'Gusty', star: 'Starry', heart: 'Hearty', moon: 'Lunar', hourglass: 'Hasty',
-  knife: 'Quick', gem: 'Jeweled', eye: 'Cursed', skull: 'Reaping', coins: 'Golden', bell: 'Ringing', web: 'Sticky', mirror: 'Mirrored', meat: 'Feasting', horn: 'Fearsome' };
-const CORE_ORDER = ['bomb', 'rock', 'fire', 'ice', 'spark', 'poison', 'wind', 'web', 'star', 'bell', 'boots', 'rocket', 'feather', 'heart', 'shield', 'mirror', 'potion', 'meat', 'magnet', 'clover', 'gem', 'eye', 'skull', 'horn', 'coins', 'moon', 'hourglass', 'stick'];
+  knife: 'Quick', gem: 'Jeweled', eye: 'Cursed', skull: 'Reaping', coins: 'Golden', bell: 'Ringing', web: 'Sticky', mirror: 'Mirrored', meat: 'Feasting', horn: 'Fearsome',
+  meteor: 'Meteoric', blink: 'Warping', dragon: 'Draconic', nova: 'Glacial', rainbow: 'Prismatic', storm: 'Stormcalling' };
+const CORE_ORDER = ['meteor', 'blink', 'dragon', 'nova', 'rainbow', 'storm','bomb', 'rock', 'fire', 'ice', 'spark', 'poison', 'wind', 'web', 'star', 'bell', 'boots', 'rocket', 'feather', 'heart', 'shield', 'mirror', 'potion', 'meat', 'magnet', 'clover', 'gem', 'eye', 'skull', 'horn', 'coins', 'moon', 'hourglass', 'stick'];
 const MELEE_W = ['sword', 'axe', 'hammer', 'trident', 'knife'], SHOOT_W = ['bow', 'wand', 'boomerang'];
 const TIERS = [null, ['Common', '#9aa5b1'], ['Uncommon', '#4caf50'], ['Rare', '#2f8fff'], ['Epic', '#a64dff'], ['Legendary', '#ff9800'], ['Mythic', '#ff3d7f']];
 const tierOf = t => TIERS[Math.min(t, 6)];
@@ -440,6 +464,9 @@ function drawIcon(it) {
   x.restore();
   // border (glowing for higher tiers)
   box(); x.lineWidth = 5; x.strokeStyle = col; if (it.tier >= 4) { x.shadowColor = col; x.shadowBlur = 14; } x.stroke(); x.shadowBlur = 0;
+  if (isRareT(t)) { // super rare: shimmering rainbow frame
+    const rg = x.createLinearGradient(0, 0, 128, 128); ['#ff4d4d', '#ffb84d', '#fff04d', '#5dff6a', '#4dd2ff', '#9a6bff', '#ff4dd8'].forEach((c2, i) => rg.addColorStop(i / 6, c2));
+    box(); x.lineWidth = 7; x.strokeStyle = rg; x.shadowColor = '#fff'; x.shadowBlur = 12; x.stroke(); x.shadowBlur = 0; }
   if (it.tier >= 5) { x.lineWidth = 2; x.strokeStyle = '#fff8'; x.beginPath(); if (x.roundRect) x.roundRect(10, 10, 108, 108, 17); x.stroke(); }
   const font = s => s + 'px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif';
   x.textAlign = 'center'; x.textBaseline = 'middle';
@@ -529,6 +556,7 @@ function describe(it) {
   if (t.mirror) L.push(`🪞 Reflects ${50 * t.mirror}% of damage back at attackers`);
   if (t.meat) L.push(`🍖 Regenerate ${2 * t.meat} HP per second`);
   if (t.horn) L.push(`📯 Scares enemies so they run away`);
+  for (const k of RARE_KEYS) if (t[k]) L.push(`<b style="color:#ff9cff">🖱️ Right-click${isTouch ? ' / ✨ button' : ' / R'}: ${BASE[k].e} ${ABIL[k].name}</b> — ${ABIL[k].desc}${t[k] > 1 ? ` (x${t[k]} power)` : ''} · ${ABIL[k].cd}s cooldown`);
   return L;
 }
 
@@ -542,13 +570,22 @@ for (let i = 0; i < 10; i++) {
   d.innerHTML = `<img alt=""><span class="k">${(i + 1) % 10}</span>`; invEl.appendChild(d); slotEls.push(d);
   d.addEventListener('pointerdown', e => slotDown(e, i));
 }
+const sellEl = document.createElement('div'); sellEl.className = 'slot sell'; sellEl.id = 'sell'; sellEl.title = 'Drag an item here to sell it';
+sellEl.innerHTML = '<span>💰</span><b>SELL</b>'; invEl.appendChild(sellEl);
+function sellPrice(it) { return Math.max(1, Math.round((4 * Math.pow(ingredients(it), 1.4) + it.power * .25) * (isRareT(it.traits) ? 4 : 1))); }
+function sellItem(i) {
+  const it = inv[i]; if (!it) return; const price = sellPrice(it);
+  inv[i] = null; renderInv(); addCoins(price);
+  toast(`💰 Sold <span style="color:${tierOf(it.tier)[1]}">${it.name}</span> for <b style="color:#ffd84a">🪙 ${price}</b>`, 2200);
+  sellEl.animate([{ transform: 'scale(1.25)' }, { transform: 'scale(1)' }], { duration: 250 });
+}
 function renderInv() {
   slotEls.forEach((d, i) => { const it = inv[i], img = d.querySelector('img');
     if (it) { img.src = it.icon; img.style.display = 'block'; } else { img.removeAttribute('src'); img.style.display = 'none'; }
     d.classList.toggle('sel', i === sel); });
   const it = inv[sel];
   if (it) { const [tn, tc] = tierOf(it.tier); infoEl.style.display = 'block';
-    infoEl.innerHTML = `<div class="nm" style="color:${tc}">${it.name}</div><div style="font-size:11px;opacity:.75">${tn} · Power ${it.power}</div>` + describe(it).map(l => `<div class="ln">${l}</div>`).join(''); }
+    infoEl.innerHTML = `<div class="nm" style="color:${tc}">${it.name}</div><div style="font-size:11px;opacity:.75">${isRareT(it.traits) ? '<b style="color:#ff9cff">🌟 SUPER RARE</b> · ' : ''}${tn} · Power ${it.power} · Sells for 🪙 ${sellPrice(it)}</div>` + describe(it).map(l => `<div class="ln">${l}</div>`).join(''); }
   else infoEl.style.display = 'none';
   if (isTouch && it) { clearTimeout(renderInv.hideT); renderInv.hideT = setTimeout(() => infoEl.style.display = 'none', 4000); }
   refreshHeld();
@@ -558,7 +595,7 @@ function addToInv(it) { const i = inv.indexOf(null); if (i < 0) return false; in
 function discover(it) { if (!discovered.has(it.name)) { discovered.add(it.name); return true; } return false; }
 
 let drag = null;
-function slotUnder(x, y) { const el = document.elementFromPoint(x, y); const s = el && el.closest && el.closest('.slot'); return s ? +s.dataset.i : -1; }
+function slotUnder(x, y) { const el = document.elementFromPoint(x, y); if (el && el.closest && el.closest('#sell')) return 'sell'; const s = el && el.closest && el.closest('.slot'); return s ? +s.dataset.i : -1; }
 function slotDown(e, i) {
   e.preventDefault(); e.stopPropagation();
   if (!inv[i]) { select(i); return; }
@@ -571,8 +608,10 @@ addEventListener('pointermove', e => {
   ghost.style.left = e.clientX + 'px'; ghost.style.top = e.clientY + 'px';
   const t = slotUnder(e.clientX, e.clientY);
   if (t !== drag.target) { if (drag.target >= 0) slotEls[drag.target].classList.remove('target'); drag.target = t; if (t >= 0 && t !== drag.from) slotEls[t].classList.add('target'); }
+  sellEl.classList.toggle('target', t === 'sell');
   const cap = ghost.querySelector('div');
-  if (t >= 0 && t !== drag.from && inv[t]) { const nt = mergeTraits(inv[drag.from], inv[t]), cost = mergeCost(inv[drag.from], inv[t]), ok = coins >= cost;
+  if (t === 'sell') { cap.innerHTML = `💰 Sell for <span style="color:#ffd84a">🪙 ${sellPrice(inv[drag.from])}</span>`; cap.style.display = 'block'; }
+  else if (t >= 0 && t !== drag.from && inv[t]) { const nt = mergeTraits(inv[drag.from], inv[t]), cost = mergeCost(inv[drag.from], inv[t]), ok = coins >= cost;
     cap.innerHTML = `✨ → ${nameOf(nt, Math.max(inv[t].tier, inv[drag.from].tier) + 1)}<br><span style="color:${ok ? '#ffd84a' : '#ff6b6b'}">🪙 ${cost}${ok ? '' : ` (you have ${coins})`}</span>`; cap.style.display = 'block'; }
   else if (t < 0 && e.clientY > invEl.getBoundingClientRect().bottom + 40) { cap.textContent = 'Drop on ground'; cap.style.display = 'block'; }
   else cap.style.display = 'none';
@@ -580,9 +619,10 @@ addEventListener('pointermove', e => {
 function endDrag(e) {
   if (!drag || e.pointerId !== drag.id) return;
   const d = drag; drag = null; ghost.style.display = 'none';
-  slotEls.forEach(s => s.classList.remove('target'));
+  slotEls.forEach(s => s.classList.remove('target')); sellEl.classList.remove('target');
   if (!d.moved) { select(d.from); return; }
   const t = slotUnder(e.clientX, e.clientY);
+  if (t === 'sell') { sellItem(d.from); return; }
   if (t >= 0 && t !== d.from) {
     if (inv[t]) doMerge(d.from, t);
     else { inv[t] = inv[d.from]; inv[d.from] = null; if (sel === d.from) sel = t; renderInv(); }
@@ -611,8 +651,8 @@ function doMerge(a, b) {
   const isNew = discover(res);
   renderInv();
   toast(`✨ ${isNew ? 'NEW: ' : ''}<span style="color:${tierOf(res.tier)[1]}">${res.name}</span>`);
-  burst(player.pos.clone().add(new V3(0, 1.4, 0)), 0xffe066, 24, 6, .8, 2);
-  burst(player.pos.clone().add(new V3(0, 1.4, 0)), new THREE.Color(tierOf(res.tier)[1]).getHex(), 20, 4, 1, 1);
+  burst(frontPos(), 0xffe066, 24, 6, .8, 2);
+  burst(frontPos(), new THREE.Color(tierOf(res.tier)[1]).getHex(), 20, 4, 1, 1);
   sfx(520, .12, 'triangle', .07, 1.5); setTimeout(() => sfx(780, .2, 'triangle', .07, 1.5), 100);
 }
 
@@ -671,7 +711,9 @@ function spawnLoot(it, x, z, pop = false, y0 = null) {
   g.position.set(x, y0 !== null ? gy + y0 : gy + 1, z); scene.add(g);
   const tex = new THREE.CanvasTexture(it.canvas);
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true })); sp.scale.set(.75, .75, 1); g.add(sp);
-  const gl = glowSprite(new THREE.Color(tierOf(it.tier)[1]).getHex(), 1.7, .6); g.add(gl);
+  const rare = isRareT(it.traits);
+  const gl = glowSprite(rare ? 0xff70ff : new THREE.Color(tierOf(it.tier)[1]).getHex(), rare ? 3 : 1.7, rare ? .9 : .6); g.add(gl);
+  if (rare) { const beam = glowSprite(0xff9cff, 1, .45); beam.scale.set(.8, 10, 1); beam.position.y = 5; g.add(beam); }
   const l = { it, g, x, z, vy: pop ? R(5, 8) : 0, vx: pop ? R(-2.5, 2.5) : 0, vz: pop ? R(-2.5, 2.5) : 0, t: rand() * 6, ground: !pop, delay: .5 };
   loot.push(l); return l;
 }
@@ -687,7 +729,8 @@ function updateLoot(dt, T) {
     if (l.delay > 0 || !alive) continue;
     if (d < mag && d > 1.2 && T.magnet) { l.x += dx / d * 12 * dt; l.z += dz / d * 12 * dt; }
     if (d < 1.5 && Math.abs(player.pos.y + .6 - l.g.position.y) < 2.5) {
-      if (addToInv(l.it)) { scene.remove(l.g); loot.splice(i, 1); toast(`+ <span style="color:${tierOf(l.it.tier)[1]}">${l.it.name}</span>`, 1500); sfx(880, .08, 'triangle', .05, 1.4); }
+      if (addToInv(l.it)) { scene.remove(l.g); loot.splice(i, 1); if (isRareT(l.it.traits)) { toast(`🌟 <b style="color:#ff9cff">SUPER RARE!</b> ${l.it.name}<br>Right-click to use its ability!`, 4000); [660, 880, 1100, 1320].forEach((f, k) => setTimeout(() => sfx(f, .2, 'triangle', .06, 1.2), k * 90)); }
+        else { toast(`+ <span style="color:${tierOf(l.it.tier)[1]}">${l.it.name}</span>`, 1500); sfx(880, .08, 'triangle', .05, 1.4); } }
       else if (fullWarn <= 0) { toast('🎒 Inventory full! Merge items or drag one out to drop it.'); fullWarn = 4; }
     }
   }
@@ -702,6 +745,7 @@ function openChest(c) {
     if (dayNum >= 2 && rand() < .2 + dayNum * .04) it = mergeItems(it, baseItem(randomBaseKey()));
     setTimeout(() => spawnLoot(it, c.x, c.z, true, 1), k * 150);
   }
+  if (rand() < .08) { const rk = pick(RARE_KEYS); setTimeout(() => spawnLoot(baseItem(rk), c.x, c.z, true, 1), n * 150); } // small chance of a super rare
 }
 
 // ============================================================ player
@@ -801,6 +845,7 @@ function buildItemModel(it) {
     if (t.meat) dec(new THREE.SphereGeometry(.08, 8, 6), 0xa0522d, null, -.13, .04, 0);
     if (t.horn) dec(new THREE.ConeGeometry(.05, .26, 8), 0xf0d080, null, .13, .32, 0).rotation.z = -.8;
   }
+  RARE_KEYS.filter(k => t[k]).forEach((k, i) => { const gl = glowSprite(ABIL[k].col, .9, .95); gl.position.set((i % 2 ? .18 : -.18), L * .55 + i * .12, .05); g.add(gl); });
   if (ec) { const gl = glowSprite(ec, 1.1, .8); gl.position.y = L; g.add(gl); g.userData.glow = gl; }
   if (it.tier >= 4) { const gl = glowSprite(new THREE.Color(tierOf(it.tier)[1]).getHex(), 1.6, .35); gl.position.y = L * .6; g.add(gl); }
   // merged items: the ingredient icons orbit the weapon
@@ -815,6 +860,7 @@ function buildItemModel(it) {
 function refreshHeld() { if (pm.held) vmHand.remove(pm.held); pm.held = buildItemModel(inv[sel]); pm.held.scale.setScalar(.48); vmHand.add(pm.held); }
 function eyePos() { return new V3(player.pos.x, player.pos.y + 1.6, player.pos.z); }
 function lookDir() { const d = new V3(); camera.getWorldDirection(d); return d; }
+function frontPos() { return eyePos().addScaledVector(lookDir(), 2.6).add(new V3(0, -.3, 0)); } // effects in front of the camera, not inside it
 function hurtPlayer(d, src) {
   if (player.invuln > 0 || player.dashT > 0 || !alive) return;
   const T = curT();
@@ -1040,7 +1086,7 @@ function fireProjectiles(st, T, dir) {
     projs.push({ m, pos, v, grav, dmg: st.pdmg, T, life: T.boomerang ? 4 : 2.2, ammo: st.ammo, spin: st.ammo === 'boomerang' ? 'y' : (st.ammo === 'rock' || st.ammo === 'bomb' || st.ammo === 'star'),
       speed: spd, age: 0, hitSet: new Set(), pierce: T.trident || 0, ret: !!T.boomerang, back: false });
   }
-  sfx(st.ammo === 'orb' ? 640 : 420, .1, st.ammo === 'orb' ? 'sine' : 'triangle', .05, st.ammo === 'orb' ? 1.6 : .5);
+  if (!st.silent) sfx(st.ammo === 'orb' ? 640 : 420, .1, st.ammo === 'orb' ? 'sine' : 'triangle', .05, st.ammo === 'orb' ? 1.6 : .5);
 }
 // ---- enemy projectiles (archers & wizards) — dodge them by moving!
 const eprojs = [];
@@ -1113,7 +1159,7 @@ function attack() {
   const it = inv[sel], T = curT();
   if (isConsumable(it)) {
     const heal = 30 * T.potion; player.hp = Math.min(player.max, player.hp + heal); inv[sel] = null; renderInv();
-    dmgText(eyePos().addScaledVector(lookDir(), 2), '+' + heal, '#6bff8a', 24); burst(player.pos.clone().add(new V3(0, 1, 0)), 0x6bff8a, 16, 3, .8, -2);
+    dmgText(eyePos().addScaledVector(lookDir(), 2), '+' + heal, '#6bff8a', 24); burst(frontPos(), 0x6bff8a, 16, 3, .8, -2);
     sfx(500, .25, 'sine', .06, 2); player.cd = .5; return;
   }
   const st = itemStats(it); player.cd = st.cd;
@@ -1136,6 +1182,56 @@ function attack() {
     let dir = look.clone();
     if (target) dir = mCenter(target).sub(eye).normalize();
     fireProjectiles(st, T, dir);
+  }
+}
+// ---- super rare right-click abilities
+const abilCd = {};
+function aimPoint(maxD = 60) {
+  const e = eyePos(), d = lookDir();
+  for (let s = 1; s < maxD; s += .5) { const p = e.clone().addScaledVector(d, s); if (p.y < groundAt(p.x, p.z, p.y)) return p; }
+  const p = e.clone().addScaledVector(d, 30); p.y = getH(p.x, p.z); return p;
+}
+function useAbility() {
+  if (!alive || state !== 'play') return;
+  const it = inv[sel]; if (!it) return;
+  const ks = RARE_KEYS.filter(k => it.traits[k]); if (!ks.length) return;
+  let used = false;
+  for (const k of ks) { if ((abilCd[k] || 0) > 0) continue; if (runAbility(k, it.traits[k], it) !== false) { abilCd[k] = ABIL[k].cd; used = true; } }
+  if (!used) sfx(150, .12, 'square', .04, .8);
+}
+function runAbility(k, n, it) {
+  const pw = it.power, P = player.pos;
+  if (k === 'meteor') {
+    const tgt = aimPoint(), start = tgt.clone().add(new V3(R(-6, 6), 38, R(-6, 6)));
+    const m = projMesh('rock', 0xff6a1a); m.scale.setScalar(3); m.position.copy(start); m.add(glowSprite(0xff8a30, 3, .9));
+    projs.push({ m, pos: start, v: tgt.clone().sub(start).normalize().multiplyScalar(42), grav: 0, dmg: pw * 2.5 * n, T: { fire: 2, bomb: 2 + n }, life: 3, ammo: 'rock', spin: true,
+      speed: 42, age: 0, hitSet: new Set(), pierce: 0, ret: false, back: false });
+    flash(tgt.clone().add(new V3(0, .3, 0)), 0xff5a20, 6, 1); sfx(220, .7, 'sawtooth', .06, .25);
+  } else if (k === 'blink') {
+    const d = lookDir(); d.y = 0; d.normalize();
+    burst(P.clone().add(new V3(0, .2, 0)), 0x9a6bff, 22, 5, .6, 0);
+    for (let s = 0; s < 14 + 4 * (n - 1); s += .5) { const ox = P.x, oz = P.z; P.x += d.x * .5; P.z += d.z * .5; resolveCollisions(P, .45); if (Math.hypot(P.x - ox, P.z - oz) < .2) break; }
+    P.x = clamp(P.x, -HALF + 8, HALF - 8); P.z = clamp(P.z, -HALF + 8, HALF - 8); player.vy = 0; player.invuln = Math.max(player.invuln, .4);
+    burst(frontPos(), 0x9a6bff, 22, 5, .6, 0); flash(frontPos(), 0x9a6bff, 5, .35); sfx(900, .25, 'sine', .06, .4);
+  } else if (k === 'dragon') {
+    player.breath = 2; player.breathTick = 0; player.breathPow = pw * .45 * n; sfx(110, .9, 'sawtooth', .07, .5);
+  } else if (k === 'nova') {
+    const r = 12 + 3 * n;
+    for (const m of monsters.slice()) if (!m.dead && Math.hypot(m.x - P.x, m.z - P.z) < r) { m.stun = Math.max(m.stun, 3 + n); m.slow = Math.max(m.slow, 6); applyHit(m, pw * n, { ice: 1 }, null, { noExplode: true }); }
+    clearEProjs();
+    flash(P.clone().add(new V3(0, 1, 0)), 0x9fe8ff, r * 2.5, .7); burst(P.clone().add(new V3(0, .25, 0)), 0x9fe8ff, 50, 16, .9, 0); burst(P.clone().add(new V3(0, .15, 0)), 0xffffff, 30, 10, .9, 0);
+    sfx(1400, .6, 'sine', .06, .3);
+  } else if (k === 'rainbow') {
+    player.hp = Math.min(player.max, player.hp + player.max * .5 * n); player.invuln = 3 + n;
+    [0xff4d4d, 0xffb84d, 0xfff04d, 0x5dff6a, 0x4dd2ff, 0x9a6bff].forEach((c, i) => setTimeout(() => burst(frontPos(), c, 12, 5, 1, -3), i * 60));
+    dmgText(eyePos().addScaledVector(lookDir(), 2), `+${Math.round(player.max * .5 * n)} 🌈`, '#ff9cff', 24);
+    [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => sfx(f, .35, 'sine', .05, 1), i * 80));
+  } else if (k === 'storm') {
+    const targets = monsters.filter(m => !m.dead && Math.hypot(m.x - P.x, m.z - P.z) < 30).sort((a, b) => Math.hypot(a.x - P.x, a.z - P.z) - Math.hypot(b.x - P.x, b.z - P.z)).slice(0, 4 + 2 * n);
+    if (!targets.length) { toast('🌩️ No enemies in range', 1000); return false; } // don't waste the cooldown
+    targets.forEach((m, i) => setTimeout(() => { if (m.dead) return; const c = mCenter(m);
+      lightning(c.clone().add(new V3(R(-2, 2), 25, R(-2, 2))), c); lightning(c.clone().add(new V3(R(-2, 2), 25, R(-2, 2))), c);
+      flash(c, 0xfff26a, 6, .35); applyHit(m, pw * 2 * n, {}, null, { chain: true, noExplode: true }); sfx(1500, .18, 'sawtooth', .05, .2); }, i * 130));
   }
 }
 function dash() {
@@ -1171,6 +1267,7 @@ addEventListener('keydown', e => {
   if (e.code === 'Space') { jump(); jumpHeld = true; }
   if (e.code === 'KeyF' || e.code === 'KeyJ' || e.code === 'Enter') attackHeld = true;
   if (e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'KeyK') dash();
+  if (e.code === 'KeyR') useAbility();
   const m = e.code.match(/^Digit(\d)$/); if (m) select((+m[1] + 9) % 10);
 });
 addEventListener('keyup', e => { keys[e.code] = false; if (e.code === 'Space') jumpHeld = false; if (e.code === 'KeyF' || e.code === 'KeyJ' || e.code === 'Enter') attackHeld = false; });
@@ -1188,6 +1285,7 @@ cv.addEventListener('pointerdown', e => {
   if (e.pointerType === 'mouse') {
     if (state !== 'play' || !alive) return;
     if (!locked()) { tryLock(); return; }
+    if (e.button === 2) { useAbility(); return; }
     if (e.button === 0) { attackHeld = true; attack(); }
     return;
   }
@@ -1217,6 +1315,7 @@ function holdBtn(id, down, up) { const b = document.getElementById(id);
 holdBtn('bAtk', () => { attackHeld = true; attack(); }, () => attackHeld = false);
 holdBtn('bJump', () => { jump(); jumpHeld = true; }, () => jumpHeld = false);
 holdBtn('bDash', dash);
+holdBtn('bAbil', useAbility);
 
 // ============================================================ day / night
 let tod = .06, dayNum = 1; const DAY_LEN = 300;
@@ -1284,7 +1383,7 @@ function drawMinimap() {
 }
 
 // ============================================================ main update
-const clockEl = document.getElementById('clock'), hpFill = document.getElementById('hpfill'), hpText = document.getElementById('hptext'), killsEl = document.getElementById('kills'), coinsEl = document.getElementById('coins');
+const clockEl = document.getElementById('clock'), hpFill = document.getElementById('hpfill'), hpText = document.getElementById('hptext'), killsEl = document.getElementById('kills'), coinsEl = document.getElementById('coins'), abilEl = document.getElementById('abil'), bAbil = document.getElementById('bAbil');
 let state = 'menu', spawnTimer = 25, mmTimer = 0, playTime = 0;
 function update(dt) {
   playTime += dt;
@@ -1307,7 +1406,7 @@ function update(dt) {
     const speed = 7 * (1 + Math.min(1.4, .35 * (T.boots || 0))) * (player.swim ? .6 : 1);
     const P = player.pos;
     if (player.dashT > 0) { player.dashT -= dt; const f = Math.hypot(mvx, mvz) > .1 ? [mvx / Math.hypot(mvx, mvz), mvz / Math.hypot(mvx, mvz)] : [Math.sin(player.yaw), Math.cos(player.yaw)];
-      P.x += f[0] * 30 * dt; P.z += f[1] * 30 * dt; if (rand() < .7) burst(P.clone().add(new V3(0, 1, 0)), 0xffa040, 2, 1, .3, 0); }
+      P.x += f[0] * 30 * dt; P.z += f[1] * 30 * dt; if (rand() < .7) burst(P.clone().add(new V3(0, .3, 0)), 0xffa040, 2, 1, .3, 0); }
     P.x += mvx * speed * dt; P.z += mvz * speed * dt;
     const ml = Math.hypot(mvx, mvz);
     player.yaw = Math.atan2(fwdX, fwdZ);
@@ -1323,6 +1422,10 @@ function update(dt) {
     else if (P.y > g + .15) player.onGround = false;
     if (g < WATER - 1 && P.y < WATER - 1.1) { P.y = WATER - 1.1; player.vy = Math.max(player.vy, 0); player.swim = true; player.jumps = T.feather || 0; }
     if (attackHeld) attack();
+    for (const k in abilCd) if (abilCd[k] > 0) abilCd[k] -= dt;
+    if (player.breath > 0) { player.breath -= dt; player.breathTick -= dt; // dragon breath: stream of fireballs
+      if (player.breathTick <= 0) { player.breathTick = .07; const d = lookDir().applyAxisAngle(UP, R(-.15, .15)); d.y += R(-.05, .05);
+        fireProjectiles({ ammo: 'orb', shots: 1, pdmg: player.breathPow, silent: true }, { fire: 2 }, d.normalize()); } }
     if (player.hurtT > 5 && player.hp < player.max) player.hp = Math.min(player.max, player.hp + 2 * dt);
     // anim
     player.walk += ml * dt * 10;
@@ -1359,6 +1462,16 @@ function update(dt) {
   const ht = `❤️ ${Math.ceil(player.hp)} / ${player.max}`; if (hpText.textContent !== ht) hpText.textContent = ht;
   const kt = `⚔️ ${player.kills} kills · 📖 ${discovered.size} found`; if (killsEl.textContent !== kt) killsEl.textContent = kt;
   const ct = `🪙 ${coins}`; if (coinsEl.textContent !== ct) coinsEl.textContent = ct;
+  // ability HUD
+  const aks = inv[sel] ? RARE_KEYS.filter(k => inv[sel].traits[k]) : [];
+  if (aks.length) {
+    const ready = aks.some(k => !(abilCd[k] > 0));
+    const at = aks.map(k => `${BASE[k].e} ${ABIL[k].name} ${abilCd[k] > 0 ? Math.ceil(abilCd[k]) + 's' : '✓'}`).join('  ·  ');
+    const full = `${isTouch ? '✨' : '🖱️ Right-click'}: ${at}`;
+    if (abilEl.textContent !== full) abilEl.textContent = full;
+    abilEl.style.display = 'block'; abilEl.classList.toggle('cool', !ready);
+    if (isTouch) bAbil.style.display = 'flex';
+  } else { abilEl.style.display = 'none'; if (isTouch) bAbil.style.display = 'none'; }
   mmTimer -= dt; if (mmTimer <= 0) { mmTimer = .15; drawMinimap(); }
 }
 const camTarget = new V3();
