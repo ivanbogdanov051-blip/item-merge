@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-title" content="Merge Quest">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <style>
-  :root { --slot: min(54px, calc((100vw - 80px) / 11), 11vh); }
+  :root { --slot: min(54px, calc((100vw - 96px) / 14), 11vh); }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1433; font-family: "Segoe UI", system-ui, sans-serif; color: #fff; user-select: none; -webkit-user-select: none; touch-action: none; }
   canvas#game { position: fixed; inset: 0; display: block; width: 100% !important; height: 100% !important; }
@@ -29,6 +29,11 @@
   #abil.cool { border-color: #776; opacity: .75; }
   #bAbil { width: 56px; height: 56px; right: 92px; bottom: 82px; border-color: #ff9cff; display: none; }
   .slot img { width: 100%; height: 100%; border-radius: 7px; pointer-events: none; display: block; }
+  .slot.armor { background: rgba(120,180,255,.1); border-color: rgba(143,208,255,.35); }
+  .slot.armor.first { margin-left: 6px; }
+  .slot.armor .ph { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: calc(var(--slot) * .45); opacity: .3; pointer-events: none; }
+  .slot.armor.full .ph { display: none; }
+  .slot.armor.full { border-color: #8fd0ff; }
   .slot .k { position: absolute; left: 3px; top: 0; font-size: 10px; opacity: .7; text-shadow: 0 1px 2px #000; pointer-events: none; }
   #info { margin-top: 6px; max-width: min(420px, 92vw); padding: 6px 12px; background: rgba(20,24,40,.6); border-radius: 10px; font-size: 13px; text-align: center; display: none; }
   #info .nm { font-weight: 700; font-size: 15px; }
@@ -71,6 +76,7 @@
   .setg select { font-size: 15px; padding: 6px; border-radius: 8px; }
   .setg button { margin-top: 10px; }
   #gearBtn { position: absolute; right: 4px; top: 3px; background: rgba(255,255,255,.12); border: none; border-radius: 8px; font-size: 16px; cursor: pointer; padding: 2px 6px; color: #fff; }
+  #pauseBtn { position: absolute; right: 36px; top: 3px; background: rgba(255,255,255,.12); border: none; border-radius: 8px; font-size: 16px; cursor: pointer; padding: 2px 6px; color: #fff; }
   #rotateHint { position: fixed; left: 50%; bottom: 40%; transform: translateX(-50%); z-index: 31; background: rgba(20,24,40,.85); padding: 8px 14px; border-radius: 14px; font-size: 13px; font-weight: 600; pointer-events: none; display: none; white-space: nowrap; }
   .screen h1 { font-size: clamp(38px, 9vw, 72px); margin: 0; letter-spacing: 2px; background: linear-gradient(90deg,#ffd86b,#ff7ab8,#7cd4ff); -webkit-background-clip: text; background-clip: text; color: transparent; filter: drop-shadow(0 4px 10px #0008); }
   .screen p { max-width: 560px; line-height: 1.5; opacity: .92; }
@@ -97,12 +103,14 @@
 <body>
 <div id="top"><div id="inv"></div><div id="info"></div></div>
 <div id="stats">
-  <div id="clock" style="margin-right:30px">☀️ Day 1</div>
+  <div id="clock" style="margin-right:62px">☀️ Day 1</div>
   <div id="hpbar"><div id="hpfill"></div></div>
   <div id="hptext">100 / 100</div>
   <div id="coins" style="font-size:16px;font-weight:800;color:#ffd84a">🪙 0</div>
   <div id="kills">⚔️ 0 &nbsp; 📖 0 items</div>
+  <div id="defense" style="font-size:12px;color:#8fd0ff"></div>
   <button id="gearBtn" type="button" title="Settings">⚙️</button>
+  <button id="pauseBtn" type="button" title="Pause (P)">⏸️</button>
 </div>
 <div id="rotateHint">📱 Turn your phone sideways to see more</div>
 <canvas id="minimap" width="130" height="130"></canvas>
@@ -134,6 +142,10 @@
   <h1>Defeated!</h1>
   <p id="deadText"></p>
   <button id="respawnBtn">Respawn</button>
+</div></div>
+<div class="screen" id="pauseScreen" style="display:none"><div class="panel">
+  <h1 style="font-size:44px">Paused</h1>
+  <div class="row"><button id="resumeBtn" type="button">▶ Resume</button><button id="pauseSettings" class="sec" type="button">⚙️ Settings</button></div>
 </div></div>
 <div class="screen" id="settings" style="display:none"><div class="panel">
   <h1 style="font-size:40px">Settings</h1>
@@ -447,6 +459,10 @@ const BASE = {
   knife: { e: '🔪', p: 7, w: 5 }, gem: { e: '💎', p: 5, w: 4 }, eye: { e: '🧿', p: 3, w: 4 }, skull: { e: '💀', p: 4, w: 3 },
   coins: { e: '💰', p: 2, w: 4 }, bell: { e: '🔔', p: 4, w: 4 }, web: { e: '🕸️', p: 3, w: 5 }, mirror: { e: '🪞', p: 2, w: 4 },
   meat: { e: '🍖', p: 2, w: 5 }, horn: { e: '📯', p: 3, w: 4 },
+  // --- travel items
+  spring: { e: '🦘', p: 2, w: 4 }, glider: { e: '🪂', p: 2, w: 4 }, fin: { e: '🐟', p: 2, w: 4 }, skate: { e: '🛹', p: 2, w: 4 }, ufo: { e: '🛸', p: 2, w: 3 },
+  // --- armour: wear in its armour slot for defence; merged traits work while worn
+  helmet: { e: '🪖', p: 3, w: 4, armor: 'head', def: 4 }, chestplate: { e: '🦺', p: 3, w: 4, armor: 'chest', def: 8 }, leggings: { e: '👖', p: 3, w: 4, armor: 'legs', def: 6 },
   // --- SUPER RARE: very low drop chance, each gives a right-click ability (kept through fusions)
   meteor: { e: '☄️', p: 8, w: .8, rare: true }, blink: { e: '🌀', p: 6, w: .8, rare: true }, dragon: { e: '🐉', p: 9, w: .8, rare: true },
   nova: { e: '🧊', p: 7, w: .8, rare: true }, rainbow: { e: '🌈', p: 6, w: .8, rare: true }, storm: { e: '🌩️', p: 8, w: .8, rare: true },
@@ -464,15 +480,21 @@ const ABIL = {
 const NOUN = { sword: 'Sword', bow: 'Bow', wand: 'Wand', stick: 'Stick', rock: 'Rock', bomb: 'Bomb', fire: 'Fireball', ice: 'Ice Shard', spark: 'Spark', boots: 'Boots', rocket: 'Rocket', feather: 'Wings', shield: 'Shield', potion: 'Potion', magnet: 'Magnet', clover: 'Clover',
   axe: 'Axe', hammer: 'Hammer', trident: 'Trident', boomerang: 'Boomerang', poison: 'Spore', wind: 'Tornado', star: 'Star', heart: 'Heart', moon: 'Moon Charm', hourglass: 'Hourglass',
   knife: 'Dagger', gem: 'Gem', eye: 'Evil Eye', skull: 'Skull', coins: 'Coin Bag', bell: 'Bell', web: 'Web', mirror: 'Mirror', meat: 'Meat', horn: 'Horn',
+  spring: 'Spring', glider: 'Glider', fin: 'Fin', skate: 'Skateboard', ufo: 'Saucer', helmet: 'Helmet', chestplate: 'Chestplate', leggings: 'Leggings',
   meteor: 'Meteor Stone', blink: 'Portal Orb', dragon: 'Dragon Soul', nova: 'Frost Core', rainbow: 'Rainbow Charm', storm: 'Storm Cloud' };
 const ADJ = { sword: 'Bladed', bow: "Archer's", wand: 'Magic', stick: 'Wooden', rock: 'Heavy', bomb: 'Explosive', fire: 'Flaming', ice: 'Frost', spark: 'Thunder', boots: 'Swift', rocket: 'Rocket', feather: 'Winged', shield: 'Guardian', potion: 'Vampiric', magnet: 'Seeking', clover: 'Lucky',
   axe: 'Cleaving', hammer: 'Crushing', trident: 'Piercing', boomerang: 'Returning', poison: 'Toxic', wind: 'Gusty', star: 'Starry', heart: 'Hearty', moon: 'Lunar', hourglass: 'Hasty',
   knife: 'Quick', gem: 'Jeweled', eye: 'Cursed', skull: 'Reaping', coins: 'Golden', bell: 'Ringing', web: 'Sticky', mirror: 'Mirrored', meat: 'Feasting', horn: 'Fearsome',
+  spring: 'Bouncy', glider: 'Gliding', fin: 'Aquatic', skate: 'Rolling', ufo: 'Hovering', helmet: 'Helmeted', chestplate: 'Armored', leggings: 'Plated',
   meteor: 'Meteoric', blink: 'Warping', dragon: 'Draconic', nova: 'Glacial', rainbow: 'Prismatic', storm: 'Stormcalling' };
-const CORE_ORDER = ['meteor', 'blink', 'dragon', 'nova', 'rainbow', 'storm','bomb', 'rock', 'fire', 'ice', 'spark', 'poison', 'wind', 'web', 'star', 'bell', 'boots', 'rocket', 'feather', 'heart', 'shield', 'mirror', 'potion', 'meat', 'magnet', 'clover', 'gem', 'eye', 'skull', 'horn', 'coins', 'moon', 'hourglass', 'stick'];
+const CORE_ORDER = ['meteor', 'blink', 'dragon', 'nova', 'rainbow', 'storm','bomb', 'rock', 'fire', 'ice', 'spark', 'poison', 'wind', 'web', 'star', 'bell', 'boots', 'rocket', 'feather', 'ufo', 'glider', 'spring', 'skate', 'fin', 'heart', 'shield', 'mirror', 'potion', 'meat', 'magnet', 'clover', 'gem', 'eye', 'skull', 'horn', 'coins', 'moon', 'hourglass', 'stick'];
 const MELEE_W = ['sword', 'axe', 'hammer', 'trident', 'knife'], SHOOT_W = ['bow', 'wand', 'boomerang'];
 const TIERS = [null, ['Common', '#9aa5b1'], ['Uncommon', '#4caf50'], ['Rare', '#2f8fff'], ['Epic', '#a64dff'], ['Legendary', '#ff9800'], ['Mythic', '#ff3d7f']];
 const tierOf = t => TIERS[Math.min(t, 6)];
+const ARMOR_SLOTS = ['head', 'chest', 'legs'], SLOT_KEY = { head: 'helmet', chest: 'chestplate', legs: 'leggings' }, SLOT_NAME = { head: 'Helmet', chest: 'Chestplate', legs: 'Leggings' };
+const ARMOR_KEYS = ARMOR_SLOTS.map(s => SLOT_KEY[s]);
+const fitsSlot = (it, s) => !!(it && it.traits[SLOT_KEY[s]]);
+const armorDef = it => Math.round(ARMOR_KEYS.reduce((a, k) => a + (it.traits[k] || 0) * BASE[k].def, 0) * (1 + .2 * (it.tier - 1)));
 const ELEM_COL = { fire: 0xff6a1a, ice: 0x7fdcff, spark: 0xfff04a, poison: 0x7be05a };
 let itemId = 1;
 const discovered = new Set();
@@ -482,7 +504,9 @@ function traitHash(t) { let h = 7; for (const k of Object.keys(t).sort()) { for 
 function nameOf(t, tier) {
   const used = new Set(); let core, suffix = '';
   const weapons = weaponsOf(t), shooter = SHOOT_W.some(k => t[k]);
-  if (weapons.length) { core = weapons.map(k => NOUN[k]).join('-'); weapons.forEach(k => used.add(k));
+  const armor = ARMOR_KEYS.filter(k => t[k]);
+  if (armor.length) { core = armor.map(k => NOUN[k]).join('-'); armor.forEach(k => used.add(k)); }
+  else if (weapons.length) { core = weapons.map(k => NOUN[k]).join('-'); weapons.forEach(k => used.add(k));
     if (shooter) { if (t.stick) { suffix = ' of Sticks'; used.add('stick'); } else if (t.rock) { suffix = ' of Boulders'; used.add('rock'); } else if (t.bomb) { suffix = ' of Bombs'; used.add('bomb'); } } }
   else { const c = CORE_ORDER.find(k => t[k]); core = NOUN[c]; used.add(c); }
   let adjs = Object.keys(t).filter(k => !used.has(k)).sort((a, b) => t[b] - t[a]).map(k => ADJ[k]);
@@ -532,7 +556,8 @@ function drawIcon(it) {
   const font = s => s + 'px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif';
   x.textAlign = 'center'; x.textBaseline = 'middle';
   const keys = Object.keys(t), w = weaponsOf(t);
-  const main = w.length ? w.slice(0, 3) : [CORE_ORDER.find(k => t[k])];
+  const aw = ARMOR_KEYS.filter(k => t[k]);
+  const main = aw.length ? aw.slice(0, 3) : w.length ? w.slice(0, 3) : [CORE_ORDER.find(k => t[k])];
   const others = keys.filter(k => !main.includes(k)).sort((a, b) => t[b] - t[a]).slice(0, 6);
   x.shadowColor = merged ? `hsl(${hue},100%,85%)` : '#0008'; x.shadowBlur = merged ? 16 : 6;
   const big = others.length ? 58 : 70;
@@ -586,11 +611,15 @@ function itemStats(it) {
 const AMMO_NAME = { stick: 'sticks', rock: 'boulders', bomb: 'bombs', arrow: 'arrows', orb: 'magic orbs', star: 'stars', boomerang: 'boomerangs' };
 function describe(it) {
   const s = itemStats(it), t = it.traits, L = [];
+  const aSlots = ARMOR_SLOTS.filter(sl => fitsSlot(it, sl));
+  if (aSlots.length) { const df = armorDef(it);
+    L.push(`<b style="color:#8fd0ff">🛡️ Armour: +${df} defence (${Math.round(df / (df + 50) * 100)}% less damage alone)</b>`);
+    L.push(`👕 Wear it in the ${aSlots.map(sl => SLOT_NAME[sl]).join(' or ')} slot — its other powers work while worn`); }
   if (isConsumable(it)) L.push(`🧪 Use to heal ${30 * t.potion} HP (or merge for lifesteal)`);
   else {
     if (s.melee && !s.punch) L.push(`⚔️ Melee: ${Math.round(s.dmg)} dmg`);
     if (s.ranged) L.push(`🎯 Shoots ${s.shots > 1 ? s.shots + ' ' : ''}${AMMO_NAME[s.ammo]}: ${Math.round(s.pdmg)} dmg each`);
-    if (s.punch) L.push('👊 Punch only — merge with a weapon!');
+    if (s.punch && !aSlots.length) L.push('👊 Punch only — merge with a weapon!');
   }
   if (t.fire) L.push('🔥 Sets enemies on fire');
   if (t.ice) L.push('❄️ Freezes & slows enemies');
@@ -624,6 +653,11 @@ function describe(it) {
   if (t.mirror) L.push(`🪞 Reflects ${50 * t.mirror}% of damage back at attackers`);
   if (t.meat) L.push(`🍖 Regenerate ${2 * t.meat} HP per second`);
   if (t.horn) L.push(`📯 Scares enemies so they run away`);
+  if (t.spring) L.push(`🦘 Jump ${Math.round(Math.min(1, .25 * t.spring) * 100)}% higher`);
+  if (t.glider) L.push(`🪂 Hold jump while falling to glide far and fast`);
+  if (t.fin) L.push(`🐟 Swim ${Math.round(60 + 50 * t.fin)}% faster`);
+  if (t.skate) L.push(`🛹 +${Math.round(Math.min(1, .25 * t.skate) * 100)}% move speed`);
+  if (t.ufo) L.push(`🛸 Hold jump in the air to fly up (${(1.2 * t.ufo).toFixed(1)}s)`);
   for (const k of RARE_KEYS) if (t[k]) L.push(`<b style="color:#ff9cff">🖱️ Right-click${isTouch ? ' / ✨ button' : ' / R'}: ${BASE[k].e} ${ABIL[k].name}</b> — ${ABIL[k].desc}${t[k] > 1 ? ` (x${t[k]} power)` : ''} · ${ABIL[k].cd}s cooldown`);
   return L;
 }
@@ -640,10 +674,25 @@ for (let i = 0; i < 10; i++) {
 }
 const sellEl = document.createElement('div'); sellEl.className = 'slot sell'; sellEl.id = 'sell'; sellEl.title = 'Drag an item here to sell it';
 sellEl.innerHTML = '<span>💰</span><b>SELL</b>'; invEl.appendChild(sellEl);
+// armour slots: refs are 'head' / 'chest' / 'legs'; inventory slots are numbers
+const armor = { head: null, chest: null, legs: null }, armorEls = {};
+ARMOR_SLOTS.forEach((s, k) => { const d = document.createElement('div'); d.className = 'slot armor' + (k === 0 ? ' first' : ''); d.dataset.a = s; d.title = SLOT_NAME[s] + ' slot';
+  d.innerHTML = `<img alt=""><span class="ph">${BASE[SLOT_KEY[s]].e}</span>`; invEl.appendChild(d); armorEls[s] = d;
+  d.addEventListener('pointerdown', e => slotDown(e, s)); });
+const isArmorRef = r => typeof r === 'string' && r in armor;
+const getSlot = r => isArmorRef(r) ? armor[r] : inv[r];
+function setSlot(r, it) { if (isArmorRef(r)) armor[r] = it; else inv[r] = it; }
+const slotEl = r => isArmorRef(r) ? armorEls[r] : slotEls[r];
+const armorDefTotal = () => ARMOR_SLOTS.reduce((a, s) => a + (armor[s] ? armorDef(armor[s]) : 0), 0);
+function infoHTML(it, worn) { const [tn, tc] = tierOf(it.tier);
+  return `<div class="nm" style="color:${tc}">${worn ? '👕 ' : ''}${it.name}</div><div style="font-size:11px;opacity:.75">${isRareT(it.traits) ? '<b style="color:#ff9cff">🌟 SUPER RARE</b> · ' : ''}${tn} · Power ${it.power} · Sells for 🪙 ${sellPrice(it)}</div>` + describe(it).map(l => `<div class="ln">${l}</div>`).join(''); }
+function showInfo(it, worn) { infoEl.innerHTML = infoHTML(it, worn); infoEl.style.display = 'block';
+  if (isTouch) { clearTimeout(renderInv.hideT); renderInv.hideT = setTimeout(() => infoEl.style.display = 'none', 4000); } }
+function equipAuto(it) { const s = ARMOR_SLOTS.find(sl => fitsSlot(it, sl) && !armor[sl]); if (!s) return false; armor[s] = it; discover(it); renderInv(); return s; }
 function sellPrice(it) { return Math.max(1, Math.round((4 * Math.pow(ingredients(it), 1.4) + it.power * .25) * (isRareT(it.traits) ? 4 : 1))); }
 function sellItem(i) {
-  const it = inv[i]; if (!it) return; const price = sellPrice(it);
-  inv[i] = null; renderInv(); addCoins(price);
+  const it = getSlot(i); if (!it) return; const price = sellPrice(it);
+  setSlot(i, null); renderInv(); addCoins(price);
   toast(`💰 Sold <span style="color:${tierOf(it.tier)[1]}">${it.name}</span> for <b style="color:#ffd84a">🪙 ${price}</b>`, 2200);
   sellEl.animate([{ transform: 'scale(1.25)' }, { transform: 'scale(1)' }], { duration: 250 });
 }
@@ -651,11 +700,11 @@ function renderInv() {
   slotEls.forEach((d, i) => { const it = inv[i], img = d.querySelector('img');
     if (it) { img.src = it.icon; img.style.display = 'block'; } else { img.removeAttribute('src'); img.style.display = 'none'; }
     d.classList.toggle('sel', i === sel); });
+  ARMOR_SLOTS.forEach(s => { const d = armorEls[s], it = armor[s], img = d.querySelector('img');
+    if (it) { img.src = it.icon; img.style.display = 'block'; } else { img.removeAttribute('src'); img.style.display = 'none'; }
+    d.classList.toggle('full', !!it); });
   const it = inv[sel];
-  if (it) { const [tn, tc] = tierOf(it.tier); infoEl.style.display = 'block';
-    infoEl.innerHTML = `<div class="nm" style="color:${tc}">${it.name}</div><div style="font-size:11px;opacity:.75">${isRareT(it.traits) ? '<b style="color:#ff9cff">🌟 SUPER RARE</b> · ' : ''}${tn} · Power ${it.power} · Sells for 🪙 ${sellPrice(it)}</div>` + describe(it).map(l => `<div class="ln">${l}</div>`).join(''); }
-  else infoEl.style.display = 'none';
-  if (isTouch && it) { clearTimeout(renderInv.hideT); renderInv.hideT = setTimeout(() => infoEl.style.display = 'none', 4000); }
+  if (it) showInfo(it); else infoEl.style.display = 'none';
   refreshHeld();
 }
 function select(i) { sel = i; renderInv(); }
@@ -663,39 +712,57 @@ function addToInv(it) { const i = inv.indexOf(null); if (i < 0) return false; in
 function discover(it) { if (!discovered.has(it.name)) { discovered.add(it.name); return true; } return false; }
 
 let drag = null;
-function slotUnder(x, y) { const el = document.elementFromPoint(x, y); if (el && el.closest && el.closest('#sell')) return 'sell'; const s = el && el.closest && el.closest('.slot'); return s ? +s.dataset.i : -1; }
+// returns a slot ref (number or armour slot name), 'sell', or -1
+function slotUnder(x, y) { const el = document.elementFromPoint(x, y); if (el && el.closest && el.closest('#sell')) return 'sell'; const s = el && el.closest && el.closest('.slot');
+  return !s ? -1 : s.dataset.a ? s.dataset.a : +s.dataset.i; }
+const isSlotRef = t => t !== -1 && t !== 'sell';
 function slotDown(e, i) {
   e.preventDefault(); e.stopPropagation();
-  if (!inv[i]) { select(i); return; }
+  if (!getSlot(i)) { if (!isArmorRef(i)) select(i); else toast(`${BASE[SLOT_KEY[i]].e} Drag a ${SLOT_NAME[i]} here to wear it`, 1800); return; }
   drag = { from: i, sx: e.clientX, sy: e.clientY, moved: false, id: e.pointerId, target: -1 };
+}
+// what happens if the dragged item lands on slot t
+function dropAction(from, t) {
+  const a = getSlot(from), b = getSlot(t);
+  if (!isSlotRef(t) || t === from) return null;
+  if (b) return 'merge';
+  if (isArmorRef(t) && !fitsSlot(a, t)) return 'nofit';
+  if (isArmorRef(from) && !isArmorRef(t)) return 'unequip';
+  return 'move';
 }
 addEventListener('pointermove', e => {
   if (!drag || e.pointerId !== drag.id) return;
-  if (!drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) > 7) { drag.moved = true; ghost.style.display = 'block'; ghost.querySelector('img').src = inv[drag.from].icon; }
+  const src = getSlot(drag.from);
+  if (!drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) > 7) { drag.moved = true; ghost.style.display = 'block'; ghost.querySelector('img').src = src.icon; }
   if (!drag.moved) return;
   ghost.style.left = e.clientX + 'px'; ghost.style.top = e.clientY + 'px';
   const t = slotUnder(e.clientX, e.clientY);
-  if (t !== drag.target) { if (drag.target >= 0) slotEls[drag.target].classList.remove('target'); drag.target = t; if (t >= 0 && t !== drag.from) slotEls[t].classList.add('target'); }
+  if (t !== drag.target) { if (isSlotRef(drag.target)) slotEl(drag.target).classList.remove('target'); drag.target = t; if (isSlotRef(t) && t !== drag.from) slotEl(t).classList.add('target'); }
   sellEl.classList.toggle('target', t === 'sell');
-  const cap = ghost.querySelector('div');
-  if (t === 'sell') { cap.innerHTML = `💰 Sell for <span style="color:#ffd84a">🪙 ${sellPrice(inv[drag.from])}</span>`; cap.style.display = 'block'; }
-  else if (t >= 0 && t !== drag.from && inv[t]) { const nt = mergeTraits(inv[drag.from], inv[t]), cost = mergeCost(inv[drag.from], inv[t]), ok = coins >= cost;
-    cap.innerHTML = `✨ → ${nameOf(nt, Math.max(inv[t].tier, inv[drag.from].tier) + 1)}<br><span style="color:${ok ? '#ffd84a' : '#ff6b6b'}">🪙 ${cost}${ok ? '' : ` (you have ${coins})`}</span>`; cap.style.display = 'block'; }
-  else if (t < 0 && e.clientY > invEl.getBoundingClientRect().bottom + 40) { cap.textContent = 'Drop on ground'; cap.style.display = 'block'; }
+  const cap = ghost.querySelector('div'), act = dropAction(drag.from, t), dst = isSlotRef(t) ? getSlot(t) : null;
+  if (t === 'sell') { cap.innerHTML = `💰 Sell for <span style="color:#ffd84a">🪙 ${sellPrice(src)}</span>`; cap.style.display = 'block'; }
+  else if (act === 'merge') { const nt = mergeTraits(src, dst), cost = mergeCost(src, dst), ok = coins >= cost;
+    cap.innerHTML = `✨ → ${nameOf(nt, Math.max(dst.tier, src.tier) + 1)}<br><span style="color:${ok ? '#ffd84a' : '#ff6b6b'}">🪙 ${cost}${ok ? '' : ` (you have ${coins})`}</span>`; cap.style.display = 'block'; }
+  else if (act === 'nofit') { cap.innerHTML = `<span style="color:#ff6b6b">Only a ${SLOT_NAME[t]} fits here</span>`; cap.style.display = 'block'; }
+  else if (act === 'move' && isArmorRef(t)) { cap.textContent = `👕 Wear (+${armorDef(src)} defence)`; cap.style.display = 'block'; }
+  else if (act === 'unequip') { cap.textContent = 'Take off'; cap.style.display = 'block'; }
+  else if (t === -1 && e.clientY > invEl.getBoundingClientRect().bottom + 40) { cap.textContent = 'Drop on ground'; cap.style.display = 'block'; }
   else cap.style.display = 'none';
 });
 function endDrag(e) {
   if (!drag || e.pointerId !== drag.id) return;
   const d = drag; drag = null; ghost.style.display = 'none';
-  slotEls.forEach(s => s.classList.remove('target')); sellEl.classList.remove('target');
-  if (!d.moved) { select(d.from); return; }
-  const t = slotUnder(e.clientX, e.clientY);
+  slotEls.forEach(s => s.classList.remove('target')); ARMOR_SLOTS.forEach(s => armorEls[s].classList.remove('target')); sellEl.classList.remove('target');
+  if (!d.moved) { if (isArmorRef(d.from)) showInfo(armor[d.from], true); else select(d.from); return; }
+  const t = slotUnder(e.clientX, e.clientY), act = dropAction(d.from, t);
   if (t === 'sell') { sellItem(d.from); return; }
-  if (t >= 0 && t !== d.from) {
-    if (inv[t]) doMerge(d.from, t);
-    else { inv[t] = inv[d.from]; inv[d.from] = null; if (sel === d.from) sel = t; renderInv(); }
-  } else if (t < 0 && e.clientY > invEl.getBoundingClientRect().bottom + 40) {
-    const it = inv[d.from]; inv[d.from] = null; renderInv();
+  if (act === 'merge') doMerge(d.from, t);
+  else if (act === 'nofit') { toast(`Only a ${BASE[SLOT_KEY[t]].e} ${SLOT_NAME[t]} fits in that slot`, 1800); sfx(140, .15, 'square', .04, .7); }
+  else if (act) { setSlot(t, getSlot(d.from)); setSlot(d.from, null); if (sel === d.from && !isArmorRef(t)) sel = t;
+    if (isArmorRef(t)) { toast(`👕 Wearing <b>${armor[t].name}</b> · 🛡️ ${armorDefTotal()} defence`, 1800); sfx(300, .12, 'triangle', .06, 1.6); }
+    renderInv(); }
+  else if (t === -1 && e.clientY > invEl.getBoundingClientRect().bottom + 40) {
+    const it = getSlot(d.from); setSlot(d.from, null); renderInv();
     const f = new V3(Math.sin(player.yaw), 0, Math.cos(player.yaw));
     spawnLoot(it, player.pos.x + f.x * 2.5, player.pos.z + f.z * 2.5, false, 1.2);
   }
@@ -711,11 +778,11 @@ function addCoins(n, pos) {
   if (pos) { dmgText(pos.clone().add(new V3(0, 1.2, 0)), `+${n} 🪙`, '#ffd84a', 20); burst(pos, 0xffd040, 10, 4, .7, 6, .8); }
 }
 function doMerge(a, b) {
-  const cost = mergeCost(inv[a], inv[b]);
+  const cost = mergeCost(getSlot(a), getSlot(b));
   if (coins < cost) { toast(`🪙 Merging these costs <b>${cost}</b> coins (you have ${coins}).<br>Defeat monsters at night to earn more!`, 3000); sfx(140, .2, 'square', .05, .7); return; }
   coins -= cost; mergesDone++;
-  const res = mergeItems(inv[a], inv[b]);
-  inv[b] = res; inv[a] = null; sel = b;
+  const res = mergeItems(getSlot(a), getSlot(b));
+  setSlot(b, res); setSlot(a, null); if (!isArmorRef(b)) sel = b;
   const isNew = discover(res);
   renderInv();
   toast(`✨ ${isNew ? 'NEW: ' : ''}<span style="color:${tierOf(res.tier)[1]}">${res.name}</span>`);
@@ -797,7 +864,9 @@ function updateLoot(dt, T) {
     if (l.delay > 0 || !alive) continue;
     if (d < mag && d > 1.2 && T.magnet) { l.x += dx / d * 12 * dt; l.z += dz / d * 12 * dt; }
     if (d < 1.5 && Math.abs(player.pos.y + .6 - l.g.position.y) < 2.5) {
-      if (addToInv(l.it)) { scene.remove(l.g); loot.splice(i, 1); if (isRareT(l.it.traits)) { toast(`🌟 <b style="color:#ff9cff">SUPER RARE!</b> ${l.it.name}<br>Right-click to use its ability!`, 4000); [660, 880, 1100, 1320].forEach((f, k) => setTimeout(() => sfx(f, .2, 'triangle', .06, 1.2), k * 90)); }
+      const worn = equipAuto(l.it);
+      if (worn) { scene.remove(l.g); loot.splice(i, 1); toast(`👕 Wearing <b>${l.it.name}</b> · 🛡️ ${armorDefTotal()} defence`, 2200); sfx(300, .12, 'triangle', .06, 1.6); }
+      else if (addToInv(l.it)) { scene.remove(l.g); loot.splice(i, 1); if (isRareT(l.it.traits)) { toast(`🌟 <b style="color:#ff9cff">SUPER RARE!</b> ${l.it.name}<br>Right-click to use its ability!`, 4000); [660, 880, 1100, 1320].forEach((f, k) => setTimeout(() => sfx(f, .2, 'triangle', .06, 1.2), k * 90)); }
         else { toast(`+ <span style="color:${tierOf(l.it.tier)[1]}">${l.it.name}</span>`, 1500); sfx(880, .08, 'triangle', .05, 1.4); } }
       else if (fullWarn <= 0) { toast('🎒 Inventory full! Merge items or drag one out to drop it.'); fullWarn = 4; }
     }
@@ -813,6 +882,7 @@ function openChest(c) {
     if (dayNum >= 2 && rand() < .2 + dayNum * .04) it = mergeItems(it, baseItem(randomBaseKey()));
     setTimeout(() => spawnLoot(it, c.x, c.z, true, 1), k * 150);
   }
+  if (rand() < .6) { const amt = Math.round(R(8, 20) * (1 + .5 * (dayNum - 1))); setTimeout(() => addCoins(amt, new V3(c.x, c.y + 1.2, c.z)), 250); } // coins!
   if (rand() < .08) { const rk = pick(RARE_KEYS); setTimeout(() => spawnLoot(baseItem(rk), c.x, c.z, true, 1), n * 150); } // small chance of a super rare
 }
 
@@ -934,6 +1004,7 @@ function hurtPlayer(d, src) {
   const T = curT();
   if (T.mirror && src && !src.dead) applyHit(src, d * .5 * T.mirror, {}, null, { noExplode: true }); // reflect back
   if (T.shield) d *= Math.pow(.7, T.shield);
+  const def = armorDefTotal(); if (def) d *= 50 / (50 + def);
   player.hp -= d; player.invuln = .45; player.hurtT = 0;
   dmgText(eyePos().addScaledVector(lookDir(), 2).add(new V3(0, -.3, 0)), '-' + Math.round(d), '#ff6b6b', 22);
   sfx(160, .18, 'sawtooth', .06, .5);
@@ -952,7 +1023,12 @@ document.getElementById('respawnBtn').onclick = () => {
   document.getElementById('deadScreen').style.display = 'none';
   if (!isTouch) tryLock();
 };
-const curT = () => inv[sel] ? inv[sel].traits : {};
+// held item + everything worn: armour traits (fire, heart, boots, …) work while worn
+function curT() {
+  const T = Object.assign({}, inv[sel] ? inv[sel].traits : {});
+  for (const s of ARMOR_SLOTS) if (armor[s]) for (const k in armor[s].traits) if (!ARMOR_KEYS.includes(k)) T[k] = (T[k] || 0) + armor[s].traits[k];
+  return T;
+}
 
 // ============================================================ monsters
 const MTYPES = {
@@ -1226,7 +1302,7 @@ function attack() {
   if (!alive || player.cd > 0) return;
   const it = inv[sel], T = curT();
   if (isConsumable(it)) {
-    const heal = 30 * T.potion; player.hp = Math.min(player.max, player.hp + heal); inv[sel] = null; renderInv();
+    const heal = 30 * it.traits.potion; player.hp = Math.min(player.max, player.hp + heal); inv[sel] = null; renderInv();
     dmgText(eyePos().addScaledVector(lookDir(), 2), '+' + heal, '#6bff8a', 24); burst(frontPos(), 0x6bff8a, 16, 3, .8, -2);
     sfx(500, .25, 'sine', .06, 2); player.cd = .5; return;
   }
@@ -1259,12 +1335,17 @@ function aimPoint(maxD = 60) {
   for (let s = 1; s < maxD; s += .5) { const p = e.clone().addScaledVector(d, s); if (p.y < groundAt(p.x, p.z, p.y)) return p; }
   const p = e.clone().addScaledVector(d, 30); p.y = getH(p.x, p.z); return p;
 }
+// [abilityKey, stacks, item] from the held item and worn armour (strongest item per ability)
+function abilSources() {
+  const best = {};
+  for (const it of [inv[sel], armor.head, armor.chest, armor.legs]) if (it) for (const k of RARE_KEYS) if (it.traits[k] && (!best[k] || it.traits[k] * it.power > best[k][1] * best[k][2].power)) best[k] = [k, it.traits[k], it];
+  return Object.values(best);
+}
 function useAbility() {
   if (!alive || state !== 'play') return;
-  const it = inv[sel]; if (!it) return;
-  const ks = RARE_KEYS.filter(k => it.traits[k]); if (!ks.length) return;
+  const src = abilSources(); if (!src.length) return;
   let used = false;
-  for (const k of ks) { if ((abilCd[k] || 0) > 0) continue; if (runAbility(k, it.traits[k], it) !== false) { abilCd[k] = ABIL[k].cd; used = true; } }
+  for (const [k, n, it] of src) { if ((abilCd[k] || 0) > 0) continue; if (runAbility(k, n, it) !== false) { abilCd[k] = ABIL[k].cd; used = true; } }
   if (!used) sfx(150, .12, 'square', .04, .8);
 }
 function runAbility(k, n, it) {
@@ -1309,7 +1390,7 @@ function dash() {
 }
 function jump() {
   if (!alive) return; const T = curT();
-  if (player.onGround || player.swim) { player.vy = 10.5; player.onGround = false; player.jumps = T.feather || 0; sfx(400, .08, 'sine', .03, 1.6); }
+  if (player.onGround || player.swim) { player.vy = 10.5 * (1 + Math.min(1, .25 * (T.spring || 0))); player.onGround = false; player.jumps = T.feather || 0; sfx(400, .08, 'sine', .03, 1.6); }
   else if (player.jumps > 0) { player.jumps--; player.vy = 9.5; burst(player.pos.clone(), 0xffffff, 8, 3, .4, 2); sfx(600, .08, 'sine', .03, 1.6); }
 }
 
@@ -1331,6 +1412,7 @@ addEventListener('keydown', e => {
   if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'Tab'].includes(e.code)) e.preventDefault();
   if ((e.code === 'Tab' || e.code === 'KeyI') && locked()) document.exitPointerLock();
   if (keys[e.code]) return; keys[e.code] = true;
+  if (e.code === 'KeyP') { if (state === 'play') pauseGame(); else if (state === 'paused') resumeGame(); return; }
   if (state !== 'play') return;
   if (e.code === 'Space') { jump(); jumpHeld = true; }
   if (e.code === 'KeyF' || e.code === 'KeyJ' || e.code === 'Enter') attackHeld = true;
@@ -1427,6 +1509,21 @@ function closeSettings() {
   if (state === 'play' && !isTouch) tryLock();
 }
 document.getElementById('gearBtn').onclick = openSettings;
+// ---- pause
+const pauseEl = document.getElementById('pauseScreen');
+function pauseGame() {
+  if (state !== 'play' || !alive) return; state = 'paused'; releaseAll();
+  if (locked()) document.exitPointerLock();
+  pauseEl.style.display = 'block';
+}
+function resumeGame() {
+  if (state !== 'paused') return; pauseEl.style.display = 'none'; state = 'play'; last = performance.now();
+  if (!isTouch) tryLock();
+}
+document.getElementById('pauseBtn').onclick = pauseGame;
+document.getElementById('resumeBtn').onclick = resumeGame;
+document.getElementById('pauseSettings').onclick = openSettings;
+document.addEventListener('visibilitychange', () => { if (document.hidden) pauseGame(); });
 document.getElementById('startSettings').onclick = openSettings;
 document.getElementById('closeSettings').onclick = closeSettings;
 document.getElementById('fsBtn').onclick = async () => {
@@ -1503,6 +1600,7 @@ function drawMinimap() {
 
 // ============================================================ main update
 const clockEl = document.getElementById('clock'), hpFill = document.getElementById('hpfill'), hpText = document.getElementById('hptext'), killsEl = document.getElementById('kills'), coinsEl = document.getElementById('coins'), abilEl = document.getElementById('abil'), bAbil = document.getElementById('bAbil');
+const defEl = document.getElementById('defense');
 let state = 'menu', spawnTimer = 25, mmTimer = 0, playTime = 0;
 function update(dt) {
   playTime += dt;
@@ -1522,7 +1620,9 @@ function update(dt) {
   // NOTE: right vector = (cos yaw, -sin yaw) -> (-fwdZ, fwdX)
   player.cd -= dt; player.invuln -= dt; player.dashCd -= dt; player.hurtT += dt;
   if (alive) {
-    const speed = 7 * (1 + Math.min(1.4, .35 * (T.boots || 0))) * (player.swim ? .6 : 1);
+    const gliding = T.glider && jumpHeld && !player.onGround && player.vy < 0;
+    const speed = 7 * (1 + Math.min(1.4, .35 * (T.boots || 0))) * (1 + Math.min(1, .25 * (T.skate || 0)))
+      * (player.swim ? (T.fin ? .6 * (1.6 + .5 * T.fin) : .6) : 1) * (gliding ? 1.6 : 1);
     const P = player.pos;
     if (player.dashT > 0) { player.dashT -= dt; const f = Math.hypot(mvx, mvz) > .1 ? [mvx / Math.hypot(mvx, mvz), mvz / Math.hypot(mvx, mvz)] : [Math.sin(player.yaw), Math.cos(player.yaw)];
       P.x += f[0] * 30 * dt; P.z += f[1] * 30 * dt; if (rand() < .7) burst(P.clone().add(new V3(0, .3, 0)), 0xffa040, 2, 1, .3, 0); }
@@ -1533,7 +1633,11 @@ function update(dt) {
     P.x = clamp(P.x, -HALF + 8, HALF - 8); P.z = clamp(P.z, -HALF + 8, HALF - 8);
     // vertical
     player.vy -= 26 * dt;
-    if (T.feather && jumpHeld && player.vy < 0) player.vy = Math.max(player.vy, -2.5);
+    if (player.onGround || player.swim) player.hover = 1.2 * (T.ufo || 0);
+    if (T.ufo && jumpHeld && !player.onGround && player.hover > 0) { // saucer: fly upward while fuel lasts
+      player.hover -= dt; player.vy = Math.min(6, player.vy + 60 * dt); if (rand() < .5) burst(player.pos.clone(), 0x9fffd0, 1, 1.5, .4, 0, .7); }
+    else if (gliding) player.vy = Math.max(player.vy, -1.2);
+    else if (T.feather && jumpHeld && player.vy < 0) player.vy = Math.max(player.vy, -2.5);
     P.y += player.vy * dt;
     const g = groundAt(P.x, P.z, P.y);
     player.swim = false;
@@ -1581,8 +1685,9 @@ function update(dt) {
   const ht = `❤️ ${Math.ceil(player.hp)} / ${player.max}`; if (hpText.textContent !== ht) hpText.textContent = ht;
   const kt = `⚔️ ${player.kills} kills · 📖 ${discovered.size} found`; if (killsEl.textContent !== kt) killsEl.textContent = kt;
   const ct = `🪙 ${coins}`; if (coinsEl.textContent !== ct) coinsEl.textContent = ct;
+  const df = armorDefTotal(), dt2 = df ? `🛡️ ${df} defence (−${Math.round(df / (df + 50) * 100)}% dmg)` : ''; if (defEl.textContent !== dt2) defEl.textContent = dt2;
   // ability HUD
-  const aks = inv[sel] ? RARE_KEYS.filter(k => inv[sel].traits[k]) : [];
+  const aks = abilSources().map(s => s[0]);
   if (aks.length) {
     const ready = aks.some(k => !(abilCd[k] > 0));
     const at = aks.map(k => `${BASE[k].e} ${ABIL[k].name} ${abilCd[k] > 0 ? Math.ceil(abilCd[k]) + 's' : '✓'}`).join('  ·  ');
@@ -1629,7 +1734,7 @@ function generate() {
   makeChest(7, -6, getH(7, -6), .5); structures.push({ x: 7, z: -6, r: 3 });
   buildNature();
   for (let k = 0; k < 45; k++) { const s = landSpot(WATER + 1, 40, .8, 1, 15); if (s) spawnLoot(baseItem(randomBaseKey()), s.x, s.z); }
-  spawnLoot(baseItem('bow'), 3.5, 3.5); spawnLoot(baseItem('sword'), -3.5, 3.5); spawnLoot(baseItem('fire'), 0, 5.5);
+  spawnLoot(baseItem('bow'), 3.5, 3.5); spawnLoot(baseItem('sword'), -3.5, 3.5); spawnLoot(baseItem('fire'), 0, 5.5); spawnLoot(baseItem(pick(ARMOR_KEYS)), 0, -4.5);
   inv[0] = baseItem('stick'); discover(inv[0]);
   player.pos.set(0, getH(0, 0), 0);
   camTarget.set(0, getH(0, 0) + 1.6, 0);
