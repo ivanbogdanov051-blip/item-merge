@@ -1192,12 +1192,14 @@ function hurtPlayer(d, src) {
 function die() {
   alive = false; player.hp = 0; attackHeld = false;
   if (locked()) document.exitPointerLock();
-  document.getElementById('deadText').innerHTML = `You survived until <b>day ${dayNum}</b> and defeated <b>${player.kills}</b> monsters.<br>You keep your items. Ready for another go?`;
+  document.getElementById('deadText').innerHTML = `You survived until <b>day ${dayNum}</b> and defeated <b>${player.kills}</b> monsters.<br>You lost all your items. Ready for another go?`;
   document.getElementById('deadScreen').style.display = 'block';
 }
 document.getElementById('respawnBtn').onclick = () => {
   for (const m of monsters) scene.remove(m.g); monsters.length = 0; clearEProjs();
-  player.pos.set(0, getH(0, 0) + 1, 0); player.vy = 0; player.hp = player.max; alive = true; spawnTimer = 20;
+  // death = lose everything: inventory, armour and bag
+  for (const s of EQUIP_SLOTS) armor[s] = null; inv.fill(null); sel = 0; renderInv();
+  player.pos.set(0, getH(0, 0) + 1, 0); player.vy = 0; player.max = player.baseMax; player.hp = player.max; alive = true; spawnTimer = 20;
   document.getElementById('deadScreen').style.display = 'none';
   if (!isTouch) tryLock();
 };
