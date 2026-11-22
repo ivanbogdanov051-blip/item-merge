@@ -87,6 +87,13 @@
   .screen button:disabled { opacity: .5; }
   .ctl { display: grid; grid-template-columns: auto auto; gap: 4px 14px; font-size: 14px; text-align: left; background: rgba(255,255,255,.07); padding: 10px 16px; border-radius: 12px; margin-bottom: 18px; }
   .ctl b { color: #ffd86b; }
+  #bookBtn { position: absolute; right: 68px; top: 3px; background: rgba(255,255,255,.12); border: none; border-radius: 8px; font-size: 16px; cursor: pointer; padding: 2px 6px; color: #fff; }
+  #bookList { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; width: min(900px, 94vw); text-align: left; }
+  .combo { background: rgba(255,255,255,.07); border-radius: 12px; padding: 10px 12px; border: 2px solid transparent; }
+  .combo.on { border-color: #7affd0; background: rgba(122,255,208,.1); }
+  .combo .ing { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; font-weight: 800; opacity: .9; }
+  .combo .ing img { width: 34px; height: 34px; }
+  .combo b { color: #7affd0; } .combo div.d { font-size: 13px; opacity: .85; }
   .ctl-more { margin-bottom: 18px; } .ctl-more summary { cursor: pointer; opacity: .75; font-size: 14px; margin-bottom: 8px; } .ctl-more .ctl { margin-bottom: 0; }
   /* phones & small windows: compact HUD so more of the world is visible */
   @media (max-width: 640px), (max-height: 520px) {
@@ -106,7 +113,7 @@
 <body>
 <div id="top"><div id="inv"></div><div id="invx"></div><div id="info"></div></div>
 <div id="stats">
-  <div id="clock" style="margin-right:62px">☀️ Day 1</div>
+  <div id="clock" style="margin-right:94px">☀️ Day 1</div>
   <div id="hpbar"><div id="hpfill"></div></div>
   <div id="hptext">100 / 100</div>
   <div id="coins" style="font-size:16px;font-weight:800;color:#ffd84a">🪙 0</div>
@@ -114,6 +121,7 @@
   <div id="defense" style="font-size:12px;color:#8fd0ff"></div>
   <button id="gearBtn" type="button" title="Settings">⚙️</button>
   <button id="pauseBtn" type="button" title="Pause (P)">⏸️</button>
+  <button id="bookBtn" type="button" title="Combo Book (B)">📖</button>
 </div>
 <div id="rotateHint">📱 Turn your phone sideways to see more</div>
 <canvas id="minimap" width="130" height="130"></canvas>
@@ -145,6 +153,12 @@
   <h1>Defeated!</h1>
   <p id="deadText"></p>
   <button id="respawnBtn">Respawn</button>
+</div></div>
+<div class="screen" id="bookScreen" style="display:none"><div class="panel">
+  <h1 style="font-size:40px">📖 Combo Book</h1>
+  <p style="margin:0 0 10px">Merge these together into one item (or wear them in armour) to unlock a combo.</p>
+  <div id="bookList"></div>
+  <button id="closeBook" type="button" style="margin-top:14px">Back</button>
 </div></div>
 <div class="screen" id="pauseScreen" style="display:none"><div class="panel">
   <h1 style="font-size:44px">Paused</h1>
@@ -1369,6 +1383,11 @@ const COMBOS = [
   { id: 'solarflare', need: ['sun', 'star'], name: 'Solar Flare', desc: 'your sun aura is twice as big and twice as hot' },
   { id: 'reaper', need: ['ghost', 'skull'], name: 'Soul Reaper', desc: 'every kill releases 3 ghosts instead of 1' },
   { id: 'earthshaker', need: ['hammer', 'pickaxe'], name: 'Earthshaker', desc: 'melee hits smash a crater into the ground and stun everything around' },
+  { id: 'prison', need: ['ice', 'web'], name: 'Frozen Prison', desc: 'hits freeze enemies solid for 1.5 seconds' },
+  { id: 'goldrush', need: ['coins', 'clover'], name: 'Gold Rush', desc: 'critical hits knock coins out of enemies' },
+  { id: 'stormcaller', need: ['wind', 'spark'], name: 'Storm Caller', desc: '25% chance per hit to call a lightning strike from the sky on the area' },
+  { id: 'plague', need: ['poison', 'bomb'], name: 'Plague Bomb', desc: 'explosions leave a toxic cloud that poisons enemies' },
+  { id: 'berserker', need: ['meat', 'axe'], name: 'Berserker', desc: 'below 40% health you deal double damage' },
 ];
 const combosOf = T => COMBOS.filter(c => c.need.every(k => T[k]));
 const hasCombo = (T, id) => { const c = COMBOS.find(c => c.id === id); return c.need.every(k => T[k]); };
@@ -1522,6 +1541,11 @@ function nearestMonster(p, maxD, filter) {
 function applyHit(m, dmg, T, dir, opts = {}) {
   if (m.dead) return;
   let crit = false; if (T.clover && rand() < Math.min(.8, .12 * T.clover)) { dmg *= 2; crit = true; }
+  if (T.meat && T.axe && player.hp < player.max * .4) dmg *= 2; // BERSERKER
+  if (crit && T.coins && T.clover && !opts.splash) spawnCoins(Math.max(2, Math.round(m.d.coin * .3 * Math.pow(1.6, m.lvl))), m.x, m.y, m.z); // GOLD RUSH
+  if (T.ice && T.web) { m.stun = Math.max(m.stun, 1.5); m.flash = .3; } // FROZEN PRISON
+  if (T.wind && T.spark && !opts.splash && rand() < .25) { const sc = mCenter(m); lightning(sc.clone().add(new V3(R(-1, 1), 16, R(-1, 1))), sc); flash(sc, 0xfff7a0, 7, .3); sfx(80, .4, 'sawtooth', .07, .5); // STORM CALLER
+    for (const o of monsters) if (!o.dead && o !== m && Math.hypot(o.x - m.x, o.z - m.z) < 4) applyHit(o, dmg * .8, {}, null, { splash: true }); }
   if (m.mark > 0) dmg *= 1 + .2 * m.markLvl; // cursed by the evil eye
   m.hp -= dmg; m.flash = .15; m.bar.visible = true;
   const c = mCenter(m);
@@ -1553,6 +1577,7 @@ function explode(pos, radius, dmg, T) {
   flash(pos, 0xffa040, radius * 3, .35); burst(pos, 0xff8a30, 16, 8, .6, 4, 1.4); burst(pos, 0x555555, 10, 5, .8, -1, 1.6);
   sfx(90, .35, 'sawtooth', .08, .3);
   if (T.void) { for (const m of monsters) { if (m.dead) continue; const d = Math.hypot(m.x - pos.x, m.z - pos.z); if (d < radius * 2.2 && d > .5) { m.x = lerp(m.x, pos.x, .7); m.z = lerp(m.z, pos.z, .7); } } flash(pos, 0x6a20c0, radius * 4, .4); }
+  if (T.poison && T.bomb) addHazard(pos.x, groundAt(pos.x, pos.z, pos.y + 1), pos.z, radius * .9, 4, dmg * .25, { poison: T.poison }, 0x7be05a); // PLAGUE BOMB
   if (T.dig && !underCave(pos)) { const g = groundAt(pos.x, pos.z, pos.y + 1); if (pos.y - g < radius + 1) deformTerrain(pos.x, pos.z, radius * 1.15, radius * .75 * T.dig); }
   const T2 = Object.assign({}, T); delete T2.bomb; delete T2.spark; delete T2.dig; delete T2.void;
   for (const m of monsters.slice()) { const d = mCenter(m).distanceTo(pos); if (d < radius + m.r) applyHit(m, dmg * (1 - d / (radius + m.r) * .5), T2, new V3(m.x - pos.x, 0, m.z - pos.z).normalize(), { noExplode: true }); }
@@ -1845,6 +1870,7 @@ addEventListener('keydown', e => {
   if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'Tab'].includes(e.code)) e.preventDefault();
   if ((e.code === 'Tab' || e.code === 'KeyI') && locked()) document.exitPointerLock();
   if (keys[e.code]) return; keys[e.code] = true;
+  if (e.code === 'KeyB') { if (state === 'book') closeBook(); else openBook(); return; }
   if (e.code === 'KeyP') { if (state === 'play') pauseGame(); else if (state === 'paused') resumeGame(); return; }
   if (state !== 'play') return;
   if (e.code === 'Space') { jump(); jumpHeld = true; }
@@ -1942,6 +1968,22 @@ function closeSettings() {
   if (state === 'play' && !isTouch) tryLock();
 }
 document.getElementById('gearBtn').onclick = openSettings;
+// ---- combo book: buy once for 30 coins, then open any time (B)
+let bookOwned = false, stateBeforeBook = 'play';
+const bookEl = document.getElementById('bookScreen'), BOOK_PRICE = 30;
+function openBook() {
+  if (state !== 'play' && state !== 'paused') return;
+  if (!bookOwned) { if (coins < BOOK_PRICE) { toast(`📖 The Combo Book costs <b>🪙 ${BOOK_PRICE}</b> (you have ${coins})`, 2500); sfx(140, .2, 'square', .05, .7); return; }
+    coins -= BOOK_PRICE; bookOwned = true; toast(`📖 You bought the <b>Combo Book</b> for 🪙 ${BOOK_PRICE}!`, 2500); sfx(660, .2, 'triangle', .06, 1.5); }
+  const T = curT();
+  document.getElementById('bookList').innerHTML = COMBOS.map(c => { const on = c.need.every(k => T[k]);
+    return `<div class="combo${on ? ' on' : ''}"><div class="ing">${c.need.map(k => `<img src="${artCanvas(k).toDataURL()}" title="${NOUN[k]}">`).join('+')}</div><b>${c.name}${on ? ' ✓ active' : ''}</b><div class="d">${c.need.map(k => NOUN[k]).join(' + ')}: ${c.desc}</div></div>`; }).join('');
+  stateBeforeBook = state; state = 'book'; releaseAll(); if (locked()) document.exitPointerLock(); bookEl.style.display = 'block';
+}
+function closeBook() { bookEl.style.display = 'none'; state = stateBeforeBook; last = performance.now(); if (state === 'play' && !isTouch) tryLock(); }
+document.getElementById('bookBtn').onclick = openBook;
+document.getElementById('closeBook').onclick = closeBook;
+document.getElementById('bookBtn').title = 'Combo Book — 🪙 ' + BOOK_PRICE;
 // ---- pause
 const pauseEl = document.getElementById('pauseScreen');
 function pauseGame() {
