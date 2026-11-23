@@ -933,8 +933,9 @@ function describe(it) {
     L.push(`👕 Wear it in the ${aSlots.map(sl => SLOT_NAME[sl]).join(' or ')} slot — its other powers work while worn`); }
   if (isConsumable(it)) L.push(`🧪 Use to heal ${30 * t.potion} HP (or merge for lifesteal)`);
   else {
-    if (s.melee && !s.punch) L.push(`⚔️ Melee: ${Math.round(s.dmg)} dmg`);
-    if (s.ranged) L.push(`🎯 Shoots ${s.shots > 1 ? s.shots + ' ' : ''}${AMMO_NAME[s.ammo]}: ${Math.round(s.pdmg)} dmg each`);
+    if (s.melee && !s.punch) L.push(`⚔️ <b>Melee</b>: ${Math.round(s.dmg)} damage · ${(1 / s.cd).toFixed(1)} swings/sec · ${s.reach.toFixed(1)}m reach`);
+    if (s.ranged) L.push(`🎯 <b>Shoots ${s.shots > 1 ? s.shots + ' ' : ''}${AMMO_NAME[s.ammo]}</b>: ${Math.round(s.pdmg)} dmg each · ${(1 / s.cd).toFixed(1)} volleys/sec`);
+    if (!s.punch) { const dps = Math.max(s.melee ? s.dmg / s.cd : 0, s.ranged ? s.pdmg * s.shots / s.cd : 0); L.push(`<span style="color:#ffd86b">💥 About ${Math.round(dps)} damage per second</span>`); }
     if (s.punch && !aSlots.length && !t.bag) L.push('👊 Punch only — merge with a weapon!');
   }
   if (t.fire) L.push('🔥 Sets enemies on fire');
@@ -1000,7 +1001,10 @@ function makeSlotEl(i) {
   const d = document.createElement('div'); d.className = 'slot'; d.dataset.i = i;
   d.innerHTML = `<img alt="">${i < 10 ? `<span class="k">${(i + 1) % 10}</span>` : ''}`; (i < 10 ? invEl : invxEl).appendChild(d); slotEls[i] = d;
   d.addEventListener('pointerdown', e => slotDown(e, i));
+  d.addEventListener('pointerenter', e => hoverInfo(e, i)); d.addEventListener('pointerleave', hoverEnd);
 }
+function hoverInfo(e, ref) { if (e.pointerType !== 'mouse' || drag) return; const it = getSlot(ref); if (it) { clearTimeout(renderInv.hideT); infoEl.innerHTML = infoHTML(it, isArmorRef(ref)); infoEl.style.display = 'block'; } }
+function hoverEnd() { if (drag) return; const it = inv[sel]; if (it) { infoEl.innerHTML = infoHTML(it); infoEl.style.display = 'block'; } else infoEl.style.display = 'none'; }
 for (let i = 0; i < 10; i++) makeSlotEl(i);
 // the worn bag decides how many extra slots exist; items in removed slots move or drop
 function syncBag() {
@@ -1022,7 +1026,7 @@ sellEl.innerHTML = '<span>💰</span><b>SELL</b>'; invEl.appendChild(sellEl);
 const armor = { head: null, chest: null, legs: null, bag: null }, armorEls = {};
 EQUIP_SLOTS.forEach((s, k) => { const d = document.createElement('div'); d.className = 'slot armor' + (k === 0 || s === 'bag' ? ' first' : '') + (s === 'bag' ? ' bagslot' : ''); d.dataset.a = s; d.title = SLOT_NAME[s] + ' slot';
   d.innerHTML = `<img alt=""><img class="ph" alt="" src="${artCanvas(SLOT_KEY[s]).toDataURL()}">`; invEl.appendChild(d); armorEls[s] = d;
-  d.addEventListener('pointerdown', e => slotDown(e, s)); });
+  d.addEventListener('pointerdown', e => slotDown(e, s)); d.addEventListener('pointerenter', e => hoverInfo(e, s)); d.addEventListener('pointerleave', hoverEnd); });
 const isArmorRef = r => typeof r === 'string' && r in armor;
 const getSlot = r => isArmorRef(r) ? armor[r] : inv[r];
 function setSlot(r, it) { if (isArmorRef(r)) armor[r] = it; else inv[r] = it; }
@@ -1031,7 +1035,7 @@ const armorDefTotal = () => ARMOR_SLOTS.reduce((a, s) => a + (armor[s] ? armorDe
 function infoHTML(it, worn) { const [tn, tc] = tierOf(it.tier);
   return `<div class="nm" style="color:${tc}">${worn ? '👕 ' : ''}${it.name}</div><div style="font-size:11px;opacity:.75">${isRareT(it.traits) ? '<b style="color:#ff9cff">🌟 SUPER RARE</b> · ' : ''}${tn} · Power ${it.power} · Sells for 🪙 ${sellPrice(it)}</div>` + describe(it).map(l => `<div class="ln">${l}</div>`).join(''); }
 function showInfo(it, worn) { infoEl.innerHTML = infoHTML(it, worn); infoEl.style.display = 'block';
-  if (isTouch) { clearTimeout(renderInv.hideT); renderInv.hideT = setTimeout(() => infoEl.style.display = 'none', 4000); } }
+  if (isTouch) { clearTimeout(renderInv.hideT); renderInv.hideT = setTimeout(() => infoEl.style.display = 'none', 9000); } }
 function equipAuto(it) { const s = EQUIP_SLOTS.find(sl => fitsSlot(it, sl) && !armor[sl]); if (!s) return false; armor[s] = it; discover(it); renderInv(); return s; }
 function sellPrice(it) { return Math.max(3, Math.round((10 * ingredients(it) + it.power * .6) * (1 + .1 * (it.tier - 1)) * (isRareT(it.traits) ? 3 : 1) * (1 + .5 * (curT().crown || 0)))); }
 function sellItem(i) {
