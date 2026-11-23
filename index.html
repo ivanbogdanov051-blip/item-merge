@@ -286,12 +286,12 @@ function planZones() {
   // caves need solid ground above them: every sample over the cave must be high enough for a roof
   const cand = [];
   for (let k = 0; k < 400; k++) { const x = R(-HALF + 55, HALF - 55), z = R(-HALF + 55, HALF - 55); if (Math.hypot(x, z) < 80) continue;
-    let mn = getH(x, z); for (let a = 0; a < 12; a++) for (const rr of [14, 29]) mn = Math.min(mn, getH(x + Math.cos(a * .52) * rr, z + Math.sin(a * .52) * rr));
-    if (mn >= WATER + 2) cand.push({ x, z, mn }); }
-  cand.sort((a, b) => b.mn - a.mn);
+    let mn = getH(x, z), mx = mn; for (let a = 0; a < 12; a++) for (const rr of [8, 14, 22, 29]) { const h = getH(x + Math.cos(a * .52) * rr, z + Math.sin(a * .52) * rr); mn = Math.min(mn, h); mx = Math.max(mx, h); }
+    if (mn >= WATER + 2) cand.push({ x, z, mn, rough: mx - mn }); }
+  cand.sort((a, b) => a.rough - b.rough); // flattest ground first: the roof stays thin enough to dig through
   const CR = 28, CH = 15;
   for (const c of cand) { if (caveZones.length >= 5) break; if (caveZones.some(Z => Math.hypot(Z.x - c.x, Z.z - c.z) < 74)) continue;
-    const floor = Math.max(WATER + 3, c.mn - 20), need = floor + CH + 3;
+    const floor = Math.max(WATER + 3, c.mn - 18), need = floor + CH + 3;
     // raise a rocky hill over the cave so there's always solid ground above it
     for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) { const d = Math.hypot(-HALF + j * STEP - c.x, -HALF + i * STEP - c.z); if (d > CR + 16) continue;
       const hill = need + 3 * Math.cos(d * .09) + 1.5 * noise(j * .3, i * .3); H[i * N + j] = Math.max(H[i * N + j], lerp(hill, H[i * N + j], smooth(CR + 2, CR + 16, d))); }
@@ -486,12 +486,12 @@ function buildCaveZone(Z) {
   const fl = new THREE.Mesh(new THREE.CircleGeometry(r + 1.5, 48).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: T.floor, flatShading: true, roughness: 1 })); fl.receiveShadow = true; g.add(fl);
   g.add(new THREE.Mesh(new THREE.CylinderGeometry(r + 1.5, r + 1.5, ht + .5, 48, 3, true).translate(0, ht / 2, 0), new THREE.MeshStandardMaterial({ color: T.wall, side: THREE.BackSide, flatShading: true, roughness: 1 })));
   g.add(new THREE.Mesh(new THREE.CircleGeometry(r + 1.5, 48).rotateX(Math.PI / 2).translate(0, ht, 0), new THREE.MeshStandardMaterial({ color: T.ceil, flatShading: true, roughness: 1 })));
-  const rockC = T.rocks, gem = T.gems, lx = (px, pz) => [x + px, z + pz];
+  const rockC = T.rocks, gem = T.gems, ea = rand() * 6.28, ox = Math.cos(ea) * 11, oz = Math.sin(ea) * 11; Z.exit = { x: x + ox, z: z + oz }; // the climb-out shaft is off to one side
   for (let k = 0; k < 40; k++) { const a = k / 40 * Math.PI * 2, rr = R(2, 3.6); // lumpy walls
     const m = mesh(new THREE.DodecahedronGeometry(rr, 0), pick(rockC), null, g, Math.cos(a) * (r + .6), R(0, ht), Math.sin(a) * (r + .6), false); m.scale.y = 1.6; m.rotation.set(rand() * 3, rand() * 3, rand() * 3); }
   for (let k = 0; k < 26; k++) { const a = rand() * 6.28, d = R(3, r - 1), hh = R(1.5, 4.5); // stalactites
     mesh(new THREE.ConeGeometry(R(.4, .9), hh, 6), Z.type === 'ice' ? 0xd8f0ff : pick(rockC), Z.type === 'ice' ? { roughness: .15 } : null, g, Math.cos(a) * d, ht - hh / 2, Math.sin(a) * d, false).rotation.x = Math.PI; }
-  const blocked = (px, pz) => Math.hypot(px, pz) < 4;
+  const blocked = (px, pz) => Math.hypot(px - ox, pz - oz) < 4;
   for (let k = 0; k < 16; k++) { const a = rand() * 6.28, d = R(6, r - 3), px = Math.cos(a) * d, pz = Math.sin(a) * d, hh = R(1.5, 4); if (blocked(px, pz)) continue; // stalagmites
     mesh(new THREE.ConeGeometry(R(.5, 1), hh, 6), pick(rockC), null, g, px, hh / 2, pz, false); circles.push(yb({ x: x + px, z: z + pz, r: .6 }, fy - 1, fy + ht)); }
   for (let k = 0; k < 40; k++) { const a = rand() * 6.28, d = R(3, r - .5), col = pick(gem), up = k % 4 === 0; // glowing crystals
@@ -514,9 +514,9 @@ function buildCaveZone(Z) {
       circles.push(yb({ x: x + px, z: z + pz, r: 1 }, fy - 1, fy + ht)); }
     for (let k = 0; k < 6; k++) { const a = rand() * 6.28, d = R(5, r - 4); mesh(new THREE.ConeGeometry(R(.8, 1.4), R(.6, 1), 10), 0xffcf30, { metalness: .8, roughness: .3, emissive: 0x553300 }, g, Math.cos(a) * d, .3, Math.sin(a) * d, false); } }
   // exit: light shaft + rope in the middle
-  const shaft = glowSprite(0xfff0c0, 1, .45); shaft.scale.set(2.4, ht * 1.2, 1); shaft.position.y = ht / 2; g.add(shaft);
-  mesh(new THREE.CylinderGeometry(.05, .05, ht, 5), 0xc8a060, null, g, .4, ht / 2, 0, false);
-  const ring = new THREE.Mesh(new THREE.RingGeometry(1, 1.4, 24).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xfff0a0, transparent: true, opacity: .7 })); ring.position.y = .07; g.add(ring);
+  const shaft = glowSprite(0xfff0c0, 1, .45); shaft.scale.set(2.4, ht * 1.2, 1); shaft.position.set(ox, ht / 2, oz); g.add(shaft);
+  mesh(new THREE.CylinderGeometry(.05, .05, ht, 5), 0xc8a060, null, g, ox + .4, ht / 2, oz, false);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(1, 1.4, 24).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xfff0a0, transparent: true, opacity: .7 })); ring.position.set(ox, .07, oz); g.add(ring);
   // treasure: 10 chests, some themed to the cave
   const spots = [];
   for (let k = 0; k < 200 && spots.length < 10; k++) { const a = rand() * 6.28, d = R(5, r - 3), px = x + Math.cos(a) * d, pz = z + Math.sin(a) * d;
@@ -1478,6 +1478,12 @@ function hurtPlayer(d, src) {
   if (T.thorns && src && !src.dead && src.hp !== undefined) applyHit(src, 10 * T.thorns + heldPower() * .3, {}, null, { splash: true, noExplode: true });
   if (T.shield) d *= Math.pow(.7, T.shield);
   const def = armorDefTotal(); if (def) d *= 50 / (50 + def);
+  if (player.hp - d <= 0 && T.heart && T.fire && !player.phoenixUsed) { // PHOENIX REBIRTH
+    player.phoenixUsed = true; player.hp = player.max * .5; player.invuln = 2.5; const pc = player.pos.clone().add(new V3(0, 1, 0));
+    burst(pc, 0xff7a1a, 40, 9, 1, -2, 1.5); burst(pc, 0xffd84a, 24, 6, 1, -1, 1.2); flash(pc, 0xff8a30, 14, .8); [392, 523, 659, 784].forEach((f, k) => setTimeout(() => sfx(f, .3, 'triangle', .06, 1.1), k * 110));
+    toast('🔥 <b style="color:#ff9a40">PHOENIX REBIRTH!</b> You rise from the ashes!', 3500);
+    for (const o of monsters.slice()) if (!o.dead && Math.hypot(o.x - player.pos.x, o.z - player.pos.z) < 9) applyHit(o, heldPower() * 3, { fire: 2 }, new V3(o.x - player.pos.x, 0, o.z - player.pos.z).normalize(), { splash: true });
+    return; }
   player.hp -= d; player.invuln = .45; player.hurtT = 0;
   dmgText(eyePos().addScaledVector(lookDir(), 2).add(new V3(0, -.3, 0)), '-' + Math.round(d), '#ff6b6b', 22);
   sfx(160, .18, 'sawtooth', .06, .5);
@@ -1494,7 +1500,7 @@ document.getElementById('respawnBtn').onclick = () => {
   for (const m of monsters) scene.remove(m.g); monsters.length = 0; clearEProjs();
   // death = lose everything: inventory, armour and bag
   for (const s of EQUIP_SLOTS) armor[s] = null; inv.fill(null); sel = 0; renderInv();
-  player.pos.set(0, getH(0, 0) + 1, 0); player.vy = 0; player.max = player.baseMax; player.hp = player.max; alive = true; spawnTimer = 20;
+  player.pos.set(0, getH(0, 0) + 1, 0); player.vy = 0; player.max = player.baseMax; player.hp = player.max; player.phoenixUsed = false; alive = true; spawnTimer = 20;
   document.getElementById('deadScreen').style.display = 'none';
   if (!isTouch) tryLock();
 };
@@ -1523,6 +1529,16 @@ const COMBOS = [
   { id: 'stormcaller', need: ['wind', 'spark'], name: 'Storm Caller', desc: '25% chance per hit to call a lightning strike from the sky on the area' },
   { id: 'plague', need: ['poison', 'bomb'], name: 'Plague Bomb', desc: 'explosions leave a toxic cloud that poisons enemies' },
   { id: 'berserker', need: ['meat', 'axe'], name: 'Berserker', desc: 'below 40% health you deal double damage' },
+  { id: 'rocketjump', need: ['spring', 'bomb'], name: 'Rocket Jump', desc: 'every jump from the ground explodes under your feet and blasts enemies away (no self damage)' },
+  { id: 'glacier', need: ['ice', 'anchor'], name: 'Glacier Crush', desc: 'slowed or frozen enemies take double damage' },
+  { id: 'backstab', need: ['knife', 'web'], name: 'Backstab', desc: 'enemies that are stuck or stunned take triple damage' },
+  { id: 'magma', need: ['fire', 'rock'], name: 'Magma Fist', desc: 'hits leave pools of lava under enemies that keep burning them' },
+  { id: 'phoenix', need: ['heart', 'fire'], name: 'Phoenix Rebirth', desc: 'once per day, a deadly hit instead revives you at half health and burns everything near you' },
+  { id: 'timestop', need: ['hourglass', 'void'], name: 'Time Stop', desc: '12% chance per hit to freeze time: every enemy is stunned for 2 seconds' },
+  { id: 'sonicboom', need: ['echo', 'bell'], name: 'Sonic Boom', desc: 'every 4th hit sends out a shockwave that damages and shoves everything within 6m' },
+  { id: 'surfer', need: ['skate', 'fin'], name: 'Water Walker', desc: 'you glide across the surface of water instead of swimming' },
+  { id: 'kingcatcher', need: ['crown', 'chain'], name: 'Kingcatcher', desc: 'hits on kings root them in place for 3s and deal double damage' },
+  { id: 'midas', need: ['coins', 'gem'], name: 'Midas Touch', desc: 'every kill drops 50% extra coins on the ground' },
 ];
 const combosOf = T => COMBOS.filter(c => c.need.every(k => T[k]));
 const hasCombo = (T, id) => { const c = COMBOS.find(c => c.id === id); return c.need.every(k => T[k]); };
@@ -1551,9 +1567,14 @@ function deformTerrain(x, z, rad, depth) {
   const j0 = Math.max(0, Math.floor((x - rad + HALF) / STEP)), j1 = Math.min(SEG, Math.ceil((x + rad + HALF) / STEP));
   const i0 = Math.max(0, Math.floor((z - rad + HALF) / STEP)), i1 = Math.min(SEG, Math.ceil((z + rad + HALF) / STEP));
   for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) { const d = Math.hypot(-HALF + j * STEP - x, -HALF + i * STEP - z);
-    if (d < rad) { const k = 1 - (d / rad) * (d / rad), vx = -HALF + j * STEP, vz = -HALF + i * STEP; let lo = WATER - 14;
-      for (const Z of caveZones) if (Math.hypot(vx - Z.x, vz - Z.z) < Z.r + 4) lo = Math.max(lo, Z.floor + Z.ht + 1.5); // never break into a cave roof
-      H[i * N + j] = Math.max(Math.min(lo, H[i * N + j]), H[i * N + j] - depth * k); } }
+    if (d < rad) { const k = 1 - (d / rad) * (d / rad), vx = -HALF + j * STEP, vz = -HALF + i * STEP, idx = i * N + j; let lo = WATER - 14, punch = null;
+      for (const Z of caveZones) { const dc = Math.hypot(vx - Z.x, vz - Z.z); if (dc < Z.r + 4) { const ceil = Z.floor + Z.ht;
+        // the roof is solid rock: you can dig down to it, and digging again right at the rock punches a hole through into the cave
+        if (dc < Z.r - 3 && H[idx] <= ceil + 1 && k > .12) punch = Z; else lo = Math.max(lo, ceil + .8); } }
+      if (punch) { H[idx] = punch.floor + .3; if (!punch.breached) { punch.breached = true; punch.found = true; toast(`⛏️ <b style="color:${CAVE_T[punch.type].col}">You dug into the ${CAVE_T[punch.type].name}!</b><br>Drop down through the hole.`, 4500); sfx(90, .6, 'sawtooth', .07, .4); } }
+      else H[idx] = Math.max(Math.min(lo, H[idx]), H[idx] - depth * k); } }
+  for (const Z of caveZones) if (!Z.hinted && !Z.breached && Math.hypot(x - Z.x, z - Z.z) < Z.r - 3 && getH(x, z) < Z.floor + Z.ht + 3.2) { Z.hinted = true;
+    toast('⛏️ The ground sounds <b>hollow</b> here… keep digging!', 3500); sfx(110, .5, 'sine', .08, .5); setTimeout(() => sfx(90, .6, 'sine', .06, .5), 220); }
   for (let i = Math.max(0, i0 - 1); i <= Math.min(SEG - 1, i1); i++) for (let j = Math.max(0, j0 - 1); j <= Math.min(SEG - 1, j1); j++) {
     const b = (i * SEG + j) * 18, a = H[i * N + j], bb = H[i * N + j + 1], c = H[(i + 1) * N + j], d = H[(i + 1) * N + j + 1];
     pos[b + 1] = a; pos[b + 4] = c; pos[b + 7] = bb; pos[b + 10] = bb; pos[b + 13] = c; pos[b + 16] = d;
@@ -1677,6 +1698,15 @@ function applyHit(m, dmg, T, dir, opts = {}) {
   if (m.dead) return;
   let crit = false; if (T.clover && rand() < Math.min(.8, .12 * T.clover)) { dmg *= 2; crit = true; }
   if (T.meat && T.axe && player.hp < player.max * .4) dmg *= 2; // BERSERKER
+  if (T.ice && T.anchor && m.slow > 0) dmg *= 2; // GLACIER CRUSH
+  if (T.knife && T.web && (m.root > 0 || m.stun > 0)) dmg *= 3; // BACKSTAB
+  if (T.crown && T.chain && m.d.king) { dmg *= 2; m.root = Math.max(m.root, 3); } // KINGCATCHER
+  if (T.fire && T.rock && !opts.splash && rand() < .4) addHazard(m.x, m.y, m.z, 1.8, 3, dmg * .3, { fire: 1 }, 0xff5a10); // MAGMA FIST
+  if (T.hourglass && T.void && !opts.splash && !opts.echo && (player.tsCd || 0) <= 0 && rand() < .12) { player.tsCd = 8; for (const o of monsters) if (!o.dead) o.stun = Math.max(o.stun, 2); // TIME STOP
+    toast('⏳ <b style="color:#c8a0ff">TIME STOP!</b>', 1500); flash(mCenter(m), 0xc8a0ff, 12, .5); sfx(180, .6, 'sine', .06, .3); }
+  if (T.echo && T.bell && !opts.splash) { player.sonic = (player.sonic || 0) + 1; if (player.sonic >= 4) { player.sonic = 0; // SONIC BOOM
+    flash(mCenter(m), 0xfff0a0, 12, .4); sfx(120, .35, 'sawtooth', .07, .5);
+    for (const o of monsters.slice()) { if (o.dead || o === m) continue; const ox = o.x - m.x, oz = o.z - m.z, od = Math.hypot(ox, oz); if (od < 6) { o.kx += ox / (od || 1) * 12; o.kz += oz / (od || 1) * 12; applyHit(o, dmg * .8, {}, null, { splash: true, noExplode: true }); } } } }
   if (T.lantern && (isNight || player.under)) dmg *= 1 + .3 * T.lantern;
   if (T.anchor && !opts.splash) { m.stun = Math.max(m.stun, .5 + .2 * T.anchor); if (m.fly) { dmg *= 1 + .6 * T.anchor; m.y -= 1.5; } }
   if (crit && T.coins && T.clover && !opts.splash) spawnCoins(Math.max(2, Math.round(m.d.coin * .3 * Math.pow(1.6, m.lvl))), m.x, m.y, m.z); // GOLD RUSH
@@ -1732,6 +1762,7 @@ function killMonster(m) {
     spawnCoins(gold, m.x, m.y, m.z); let it = baseItem(pick(RARE_KEYS)); const nm = Math.floor(rand() * 3); for (let k = 0; k < nm; k++) it = mergeItems(it, baseItem(randomBaseKey(NONBAG)));
     spawnLoot(it, m.x, m.z, true, 1); flash(c, 0xffd84a, 12, .6);
     toast(`👑 <b style="color:#ffd84a">King defeated!</b> +🪙 ${gold} and a super rare item!`, 4000); [784, 988, 1175, 1568].forEach((f, k) => setTimeout(() => sfx(f, .25, 'triangle', .06, 1), k * 100)); return; }
+  if (curT().coins && curT().gem) spawnCoins(Math.max(2, Math.round(gold * .5)), m.x, m.y, m.z); // MIDAS TOUCH
   addCoins(gold, c);
   if (rand() < (m.type === 'brute' ? 1 : .6)) { // stronger monsters drop better (pre-merged) loot
     let n = 0; while (n < Math.min(3, m.lvl) && rand() < .5) n++; const it = lootItem(n);
@@ -1899,7 +1930,7 @@ function attack() {
     flash(frontPos(), 0x9fffa0, 4, .3); sfx(1000, .2, 'sawtooth', .05, 1.8); } }
   // Divine+ (tier 7+) or super rare explosive weapons blow real craters into the ground
   if (it && (it.tier >= 7 || isRareT(it.traits)) && T.bomb) T.dig = 1 + Math.max(0, it.tier - 7) * .3;
-  if (T.pickaxe && !player.under) { const gp = aimPoint(7); if (gp.distanceTo(eyePos()) < 7.5) { deformTerrain(gp.x, gp.z, 1.2 + .3 * T.pickaxe, .8 + .5 * T.pickaxe); sfx(150, .1, 'square', .05, .5); } }
+  if (T.pickaxe && !player.under) { const gp = aimPoint(7); if (gp.distanceTo(eyePos()) < 7.5) { deformTerrain(gp.x, gp.z, 2.4 + .3 * T.pickaxe, 2 + .8 * T.pickaxe); sfx(150, .1, 'square', .05, .5); } }
   // aim assist: pick the monster closest to the crosshair
   const eye = eyePos(), look = lookDir(); let target = null, best = .965;
   for (const m of monsters) { if (m.dead) continue; const v = mCenter(m).sub(eye), d = v.length(); if (d > (st.ranged ? 40 : 8)) continue;
@@ -1986,6 +2017,7 @@ function dash() {
 }
 function jump() {
   if (!alive) return; const T = curT();
+  if (player.onGround && T.spring && T.bomb) explode(player.pos.clone().add(new V3(0, .3, 0)), 3 + T.bomb, heldPower() * 1.3, {}); // ROCKET JUMP
   if (player.onGround || player.swim) { player.vy = 10.5 * (1 + Math.min(1, .25 * (T.spring || 0))); player.onGround = false; player.jumps = T.feather || 0; sfx(400, .08, 'sine', .03, 1.6); }
   else if (player.jumps > 0) { player.jumps--; player.vy = 9.5; burst(player.pos.clone(), 0xffffff, 8, 3, .4, 2); sfx(600, .08, 'sine', .03, 1.6); }
 }
@@ -2184,7 +2216,7 @@ function sunrise() {
 }
 function onNewDay() {
   for (let k = 0; k < 4; k++) { const s = landSpot(WATER + 1.5, 30, .4, 3, 0); if (s) makeChest(s.x, s.z, s.h, rand() * 6); }
-  player.baseMax += 20; player.hp = player.baseMax + 30 * (curT().heart || 0);
+  player.baseMax += 20; player.hp = player.baseMax + 30 * (curT().heart || 0); player.phoenixUsed = false;
   toast(`📦 Day ${dayNum}: +20 max HP and new chests appeared!`, 3500);
 }
 
@@ -2239,7 +2271,7 @@ function update(dt) {
   const fwdX = -Math.sin(camYaw), fwdZ = -Math.cos(camYaw), rtX = -fwdZ, rtZ = fwdX;
   let mvx = fwdX * iy + rtX * ix, mvz = fwdZ * iy + rtZ * ix;
   // NOTE: right vector = (cos yaw, -sin yaw) -> (-fwdZ, fwdX)
-  player.cd -= dt; player.invuln -= dt; player.dashCd -= dt; player.hurtT += dt;
+  player.cd -= dt; player.invuln -= dt; player.dashCd -= dt; player.hurtT += dt; player.tsCd = (player.tsCd || 0) - dt;
   if (alive) {
     const gliding = T.glider && jumpHeld && !player.onGround && player.vy < 0;
     const speed = 7 * (1 + Math.min(1.4, .35 * (T.boots || 0))) * (1 + Math.min(1, .25 * (T.skate || 0)))
@@ -2263,7 +2295,8 @@ function update(dt) {
     else if (gliding) player.vy = Math.max(player.vy, -1.2);
     else if (T.feather && jumpHeld && player.vy < 0) player.vy = Math.max(player.vy, -2.5);
     P.y += player.vy * dt;
-    const g = groundAt(P.x, P.z, P.y);
+    let g = groundAt(P.x, P.z, P.y);
+    if (T.skate && T.fin && g < WATER) { g = WATER; if (ml > .1 && rand() < .25) burst(P.clone().add(new V3(0, .1, 0)), 0xbfe8ff, 2, 2, .4, 4, .8); } // WATER WALKER
     player.swim = false;
     if (P.y <= g) { if (player.vy < -13 && T.bomb && T.feather) { explode(P.clone().add(new V3(0, .5, 0)), 4 + T.bomb, heldPower() * 2.2, { fire: T.fire || 0, bomb: 0 }); camPitch += .06; } // METEOR STOMP
       P.y = g; if (player.vy < 0) player.vy = 0; player.onGround = true; player.jumps = T.feather || 0; }
@@ -2273,17 +2306,18 @@ function update(dt) {
     // ---- underground caves: drop in through the glowing hole, climb out at the light shaft
     player.portalCd = (player.portalCd || 0) - dt;
     player.under = caveZones.find(Z => P.y < Z.floor + Z.ht && P.y > Z.floor - 5 && Math.hypot(P.x - Z.x, P.z - Z.z) < Z.r + 2) || null;
+    if (player.under && !player.wasUnder) player.portalCd = Math.max(player.portalCd, 1.5); player.wasUnder = !!player.under; // no instant bounce back out
     if (player.portalCd <= 0) for (const Z of caveZones) {
       if (!player.under && Math.hypot(P.x - Z.ent.x, P.z - Z.ent.z) < 1.7 && Math.abs(P.y - Z.ent.y) < 2.5) { // descend
         P.set(Z.x + 3, Z.floor + .1, Z.z); player.vy = 0; player.portalCd = 1.2; player.under = Z;
         for (const m of monsters) if (!m.cave && !m.dead) { m.dead = true; scene.remove(m.g); } // surface monsters lose you
         if (!Z.found) { Z.found = true; toast(`⛏️ <b style="color:${CAVE_T[Z.type].col}">You found the ${CAVE_T[Z.type].name}!</b><br>Monsters lurk here day and night, but the chests are rich. Stand in the light to climb out.`, 4500); }
         sfx(200, .5, 'sine', .06, .4); flash(P.clone().add(new V3(0, 1, 0)), 0x8040ff, 6, .5); break; }
-      if (player.under === Z && Math.hypot(P.x - Z.x, P.z - Z.z) < 1.3) { // climb out
+      if (player.under === Z && Math.hypot(P.x - Z.exit.x, P.z - Z.exit.z) < 1.4 && P.y < Z.floor + 2) { // climb out
         const a = rand() * 6.28; P.set(Z.ent.x + Math.cos(a) * 4.2, Z.ent.y + .5, Z.ent.z + Math.sin(a) * 4.2); player.vy = 4; player.portalCd = 1.2; player.under = null;
         sfx(500, .4, 'sine', .05, 1.8); toast('☀️ Back on the surface', 1500); break; } }
     if (player.under) { const Z = player.under, dx = P.x - Z.x, dz = P.z - Z.z, d = Math.hypot(dx, dz); if (d > Z.r - .5) { P.x = Z.x + dx / d * (Z.r - .5); P.z = Z.z + dz / d * (Z.r - .5); } }
-    for (const Z of caveZones) Z.group.visible = player.under === Z;
+    for (const Z of caveZones) Z.group.visible = player.under === Z || (Z.breached && Math.hypot(P.x - Z.x, P.z - Z.z) < Z.r + 45);
     // volcano lava burns
     for (const L of lavaPools) if (Math.hypot(P.x - L.x, P.z - L.z) < L.r && P.y < L.y + .4 && P.y > L.y - 3) {
       player.hp -= 30 * dt; player.hurtT = 0; if (rand() < .3) burst(P.clone(), 0xff6a1a, 3, 3, .4, -3); document.getElementById('hurt').style.opacity = .6; setTimeout(() => document.getElementById('hurt').style.opacity = 0, 100);
