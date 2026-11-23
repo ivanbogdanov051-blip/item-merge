@@ -169,6 +169,8 @@
   <div class="setg">
     <label for="sBright">☀️ Brightness <span id="vBright"></span></label>
     <input type="range" id="sBright" min="0.4" max="1.5" step="0.05">
+    <label for="sMusic">🎵 Music volume <span id="vMusic"></span></label>
+    <input type="range" id="sMusic" min="0" max="1" step="0.05">
     <label for="sSens">👀 Look speed <span id="vSens"></span></label>
     <input type="range" id="sSens" min="0.3" max="3" step="0.1">
     <label for="sTouch">📱 Touch controls (joystick &amp; buttons)</label>
@@ -193,7 +195,7 @@ const pick = arr => arr[Math.floor(rand() * arr.length)];
 // phones/tablets: a coarse (finger) pointer. Laptops with touchscreens keep mouse controls until you actually touch the screen.
 const autoTouch = matchMedia('(pointer: coarse)').matches || (navigator.maxTouchPoints > 0 && !matchMedia('(pointer: fine)').matches);
 let isTouch = autoTouch;
-const settings = { bright: 1, sens: 1, touch: 'auto' };
+const settings = { bright: 1, sens: 1, touch: 'auto', music: .5 };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('mq-settings') || '{}')); } catch (e) { }
 function saveSettings() { try { localStorage.setItem('mq-settings', JSON.stringify(settings)); } catch (e) { } }
 
@@ -271,26 +273,35 @@ const craters = [];
 const circles = [], boxes = [], platforms = [], structures = [], houses = [], caves = [], chests = [], caveZones = [];
 // ---- world zones: underground crystal caves (under high ground) + 5 surface biomes
 const biomes = [];
+const CAVE_TYPES = ['crystal', 'lava', 'ice', 'mushroom', 'ruins'];
+const CAVE_T = {
+  crystal: { name: 'Crystal Cave', floor: 0x3a3048, wall: 0x4a4258, ceil: 0x2e2638, rocks: [0x4e4858, 0x5a5262, 0x463f50], gems: [0xb07bff, 0x6be4ff, 0xff7ad9, 0x7affb0], fog: 0x150c22, beam: 0xb080ff, theme: null, col: '#c8a0ff' },
+  lava: { name: 'Lava Cavern', floor: 0x2a1612, wall: 0x3a2220, ceil: 0x1e1210, rocks: [0x3a2a26, 0x46302a, 0x2e201c], gems: [0xff5a10, 0xffa030, 0xff3020], fog: 0x2a0c04, beam: 0xff6020, theme: ['fire', 'dragon', 'meteor', 'bomb', 'sun'], col: '#ff8a50' },
+  ice: { name: 'Frozen Grotto', floor: 0xbfd8ea, wall: 0x8fb4d0, ceil: 0x7aa0c0, rocks: [0xa8c8e0, 0x90b8d8, 0xc8e0f0], gems: [0x9fe8ff, 0xffffff, 0x6ac8ff], fog: 0x1a2a40, beam: 0x9fe8ff, theme: ['ice', 'nova', 'moon', 'skate', 'fin'], col: '#9fe8ff' },
+  mushroom: { name: 'Glowshroom Hollow', floor: 0x2a2040, wall: 0x3a2a50, ceil: 0x221a34, rocks: [0x3a2a50, 0x48365e, 0x2e2240], gems: [0x40ffb0, 0xff4a8a, 0x40d8ff], fog: 0x0c1a18, beam: 0x40ffb0, theme: ['poison', 'ghost', 'void', 'clover', 'potion'], col: '#60ffc0' },
+  ruins: { name: 'Lost Ruins', floor: 0x8a7a5a, wall: 0x6a5e48, ceil: 0x4a4234, rocks: [0x9a8a6a, 0x8a7a5a, 0x7a6a4a], gems: [0xffd040, 0xffe890, 0x40c0ff], fog: 0x1e1a10, beam: 0xffd040, theme: ['crown', 'gem', 'coins', 'star', 'hourglass', 'meteor'], col: '#ffd060' },
+};
 const BIOME_R = { desert: 42, volcano: 38, tundra: 42, mushroom: 36, sky: 30 };
 function planZones() {
   // caves need solid ground above them: every sample over the cave must be high enough for a roof
   const cand = [];
   for (let k = 0; k < 400; k++) { const x = R(-HALF + 55, HALF - 55), z = R(-HALF + 55, HALF - 55); if (Math.hypot(x, z) < 80) continue;
-    let mn = getH(x, z); for (let a = 0; a < 12; a++) for (const rr of [11, 21]) mn = Math.min(mn, getH(x + Math.cos(a * .52) * rr, z + Math.sin(a * .52) * rr));
+    let mn = getH(x, z); for (let a = 0; a < 12; a++) for (const rr of [14, 29]) mn = Math.min(mn, getH(x + Math.cos(a * .52) * rr, z + Math.sin(a * .52) * rr));
     if (mn >= WATER + 2) cand.push({ x, z, mn }); }
   cand.sort((a, b) => b.mn - a.mn);
-  for (const c of cand) { if (caveZones.length >= 3) break; if (caveZones.some(Z => Math.hypot(Z.x - c.x, Z.z - c.z) < 70)) continue;
-    const floor = Math.max(WATER + 3, c.mn - 17), need = floor + 12 + 3;
+  const CR = 28, CH = 15;
+  for (const c of cand) { if (caveZones.length >= 5) break; if (caveZones.some(Z => Math.hypot(Z.x - c.x, Z.z - c.z) < 74)) continue;
+    const floor = Math.max(WATER + 3, c.mn - 20), need = floor + CH + 3;
     // raise a rocky hill over the cave so there's always solid ground above it
-    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) { const d = Math.hypot(-HALF + j * STEP - c.x, -HALF + i * STEP - c.z); if (d > 20 + 16) continue;
-      const hill = need + 3 * Math.cos(d * .12) + 1.5 * noise(j * .3, i * .3); H[i * N + j] = Math.max(H[i * N + j], lerp(hill, H[i * N + j], smooth(22, 36, d))); }
-    let ent = null; for (let k = 0; k < 60 && !ent; k++) { const a = rand() * 6.28, d = R(0, 12), ex = c.x + Math.cos(a) * d, ez = c.z + Math.sin(a) * d; if (slopeAt(ex, ez) < .45) ent = { x: ex, z: ez }; }
-    caveZones.push({ x: c.x, z: c.z, r: 20, floor, ht: 12, ent: ent || { x: c.x, z: c.z }, spawnT: 2, inside: false, found: false }); }
+    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) { const d = Math.hypot(-HALF + j * STEP - c.x, -HALF + i * STEP - c.z); if (d > CR + 16) continue;
+      const hill = need + 3 * Math.cos(d * .09) + 1.5 * noise(j * .3, i * .3); H[i * N + j] = Math.max(H[i * N + j], lerp(hill, H[i * N + j], smooth(CR + 2, CR + 16, d))); }
+    let ent = null; for (let k = 0; k < 60 && !ent; k++) { const a = rand() * 6.28, d = R(0, 16), ex = c.x + Math.cos(a) * d, ez = c.z + Math.sin(a) * d; if (slopeAt(ex, ez) < .45) ent = { x: ex, z: ez }; }
+    caveZones.push({ type: CAVE_TYPES[caveZones.length], x: c.x, z: c.z, r: CR, floor, ht: CH, ent: ent || { x: c.x, z: c.z }, spawnT: 2, inside: false, found: false }); }
   // biomes
   for (const type of ['volcano', 'desert', 'tundra', 'mushroom', 'sky']) { const r = BIOME_R[type];
     for (let k = 0; k < 120; k++) { const s = landSpot(WATER + 3, type === 'volcano' ? 22 : 28, .6, 0, 75); if (!s) continue;
       if (Math.abs(s.x) > HALF - r - 15 || Math.abs(s.z) > HALF - r - 15) continue;
-      if (caveZones.some(Z => Math.hypot(Z.x - s.x, Z.z - s.z) < Z.r + r + 12) || biomes.some(b => Math.hypot(b.x - s.x, b.z - s.z) < b.r + r + 15)) continue;
+      if (caveZones.some(Z => Math.hypot(Z.x - s.x, Z.z - s.z) < Z.r + 10 + r * .5) || biomes.some(b => Math.hypot(b.x - s.x, b.z - s.z) < b.r + r + 15)) continue;
       biomes.push({ type, x: s.x, z: s.z, r, h: s.h }); break; } }
   // shape the land
   for (const b of biomes) for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
@@ -299,6 +310,8 @@ function planZones() {
     else if (b.type === 'desert') { const t = (1 - smooth(b.r * .55, b.r + 8, d)) * .85, dune = b.h + 2.2 * Math.sin(wx * .13) * Math.cos(wz * .11); H[i * N + j] = lerp(o, d < 16 ? b.h : dune, t); }
     else { const t = (1 - smooth(b.r * .3, b.r * .9, d)) * (b.type === 'sky' ? .9 : .6); H[i * N + j] = lerp(o, b.h, t); }
   }
+  // keep solid rock above every cave whatever the biomes did
+  for (const Z of caveZones) for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) if (Math.hypot(-HALF + j * STEP - Z.x, -HALF + i * STEP - Z.z) < Z.r + 4) H[i * N + j] = Math.max(H[i * N + j], Z.floor + Z.ht + 2);
 }
 function biomeAt(x, z, pad = 0) { for (const b of biomes) if (Math.hypot(x - b.x, z - b.z) < b.r + pad) return b; return null; }
 function biomeColor(x, z, h, v) {
@@ -465,44 +478,61 @@ function buildCave(x, z) {
   caves.push({ x, z, roof, r: R0 }); structures.push({ x, z, r: 10, kind: 'cave' });
 }
 
-// ---------- crystal caves: UNDERGROUND caverns. Find the glowing entrance on the surface, drop in, climb out via the light shaft.
+// ---------- underground: 5 different cave biomes. Find the glowing entrance on the surface, drop in, climb out via the light shaft.
 const yb = (c, y0, y1) => { c.minY = y0; c.maxY = y1; return c; }; // collision circle limited to a height range
+const lavaPools = []; // {x, z, y, r}: standing in these burns
 function buildCaveZone(Z) {
-  const { x, z, r, floor: fy, ht } = Z, g = new THREE.Group(); g.position.set(x, fy, z); scene.add(g); Z.group = g; g.visible = false;
-  const fl = new THREE.Mesh(new THREE.CircleGeometry(r + 1.5, 40).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x3a3048, flatShading: true, roughness: 1 })); fl.receiveShadow = true; g.add(fl);
-  g.add(new THREE.Mesh(new THREE.CylinderGeometry(r + 1.5, r + 1.5, ht + .5, 40, 3, true).translate(0, ht / 2, 0), new THREE.MeshStandardMaterial({ color: 0x4a4258, side: THREE.BackSide, flatShading: true, roughness: 1 })));
-  g.add(new THREE.Mesh(new THREE.CircleGeometry(r + 1.5, 40).rotateX(Math.PI / 2).translate(0, ht, 0), new THREE.MeshStandardMaterial({ color: 0x2e2638, flatShading: true, roughness: 1 })));
-  const rockC = [0x4e4858, 0x5a5262, 0x463f50];
-  for (let k = 0; k < 30; k++) { const a = k / 30 * Math.PI * 2, rr = R(2, 3.4); // lumpy walls
+  const { x, z, r, floor: fy, ht } = Z, T = CAVE_T[Z.type], g = new THREE.Group(); g.position.set(x, fy, z); scene.add(g); Z.group = g; g.visible = false;
+  const fl = new THREE.Mesh(new THREE.CircleGeometry(r + 1.5, 48).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: T.floor, flatShading: true, roughness: 1 })); fl.receiveShadow = true; g.add(fl);
+  g.add(new THREE.Mesh(new THREE.CylinderGeometry(r + 1.5, r + 1.5, ht + .5, 48, 3, true).translate(0, ht / 2, 0), new THREE.MeshStandardMaterial({ color: T.wall, side: THREE.BackSide, flatShading: true, roughness: 1 })));
+  g.add(new THREE.Mesh(new THREE.CircleGeometry(r + 1.5, 48).rotateX(Math.PI / 2).translate(0, ht, 0), new THREE.MeshStandardMaterial({ color: T.ceil, flatShading: true, roughness: 1 })));
+  const rockC = T.rocks, gem = T.gems, lx = (px, pz) => [x + px, z + pz];
+  for (let k = 0; k < 40; k++) { const a = k / 40 * Math.PI * 2, rr = R(2, 3.6); // lumpy walls
     const m = mesh(new THREE.DodecahedronGeometry(rr, 0), pick(rockC), null, g, Math.cos(a) * (r + .6), R(0, ht), Math.sin(a) * (r + .6), false); m.scale.y = 1.6; m.rotation.set(rand() * 3, rand() * 3, rand() * 3); }
-  for (let k = 0; k < 18; k++) { const a = rand() * 6.28, d = R(3, r - 1), hh = R(1.5, 4); // stalactites
-    mesh(new THREE.ConeGeometry(R(.4, .9), hh, 6), pick(rockC), null, g, Math.cos(a) * d, ht - hh / 2, Math.sin(a) * d, false).rotation.x = Math.PI; }
-  for (let k = 0; k < 12; k++) { const a = rand() * 6.28, d = R(5, r - 3), px = Math.cos(a) * d, pz = Math.sin(a) * d, hh = R(1.5, 3.5); // stalagmites
-    mesh(new THREE.ConeGeometry(R(.5, .9), hh, 6), pick(rockC), null, g, px, hh / 2, pz, false); circles.push(yb({ x: x + px, z: z + pz, r: .6 }, fy - 1, fy + ht)); }
-  const crCols = [0xb07bff, 0x6be4ff, 0xff7ad9, 0x7affb0];
-  for (let k = 0; k < 30; k++) { const a = rand() * 6.28, d = R(3, r - .5), col = pick(crCols), up = k % 4 === 0;
+  for (let k = 0; k < 26; k++) { const a = rand() * 6.28, d = R(3, r - 1), hh = R(1.5, 4.5); // stalactites
+    mesh(new THREE.ConeGeometry(R(.4, .9), hh, 6), Z.type === 'ice' ? 0xd8f0ff : pick(rockC), Z.type === 'ice' ? { roughness: .15 } : null, g, Math.cos(a) * d, ht - hh / 2, Math.sin(a) * d, false).rotation.x = Math.PI; }
+  const blocked = (px, pz) => Math.hypot(px, pz) < 4;
+  for (let k = 0; k < 16; k++) { const a = rand() * 6.28, d = R(6, r - 3), px = Math.cos(a) * d, pz = Math.sin(a) * d, hh = R(1.5, 4); if (blocked(px, pz)) continue; // stalagmites
+    mesh(new THREE.ConeGeometry(R(.5, 1), hh, 6), pick(rockC), null, g, px, hh / 2, pz, false); circles.push(yb({ x: x + px, z: z + pz, r: .6 }, fy - 1, fy + ht)); }
+  for (let k = 0; k < 40; k++) { const a = rand() * 6.28, d = R(3, r - .5), col = pick(gem), up = k % 4 === 0; // glowing crystals
     const cr = mesh(new THREE.OctahedronGeometry(R(.4, 1.1), 0), col, { emissive: col, emissiveIntensity: .9, roughness: .25 }, g, Math.cos(a) * d, up ? ht - .6 : .5, Math.sin(a) * d, false);
     cr.scale.y = R(1.6, 2.8); cr.rotation.z = R(-.5, .5);
-    if (k % 3 === 0) { const gl = glowSprite(col, 4.5, .5); gl.position.set(Math.cos(a) * d, up ? ht - 1.2 : 1.2, Math.sin(a) * d); g.add(gl); } }
+    if (k % 3 === 0) { const gl = glowSprite(col, 5, .5); gl.position.set(Math.cos(a) * d, up ? ht - 1.2 : 1.2, Math.sin(a) * d); g.add(gl); } }
+  // biome features
+  if (Z.type === 'lava') for (let k = 0; k < 4; k++) { const a = k * 1.57 + R(0, .8), d = R(10, r - 7), px = Math.cos(a) * d, pz = Math.sin(a) * d, pr = R(2.5, 4);
+    const pool = new THREE.Mesh(new THREE.CircleGeometry(pr, 20).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xff5a10 })); pool.position.set(px, .06, pz); g.add(pool);
+    const gl = glowSprite(0xff6020, pr * 3, .7); gl.position.set(px, 1, pz); g.add(gl);
+    lavaPools.push({ x: x + px, z: z + pz, y: fy, r: pr }); addHazard(x + px, fy, z + pz, pr, 1e9, 35, { fire: 3 }, 0xff5a10); hazards[hazards.length - 1].s.visible = false; }
+  if (Z.type === 'ice') for (let k = 0; k < 18; k++) { const a = rand() * 6.28, d = R(6, r - 2), px = Math.cos(a) * d, pz = Math.sin(a) * d, hh = R(3, 8); if (blocked(px, pz)) continue;
+    mesh(new THREE.ConeGeometry(R(.6, 1.2), hh, 6), 0xbfeaff, { emissive: 0x2060a0, emissiveIntensity: .3, roughness: .1 }, g, px, hh / 2 - .3, pz, false).rotation.z = R(-.2, .2); circles.push(yb({ x: x + px, z: z + pz, r: .8 }, fy - 1, fy + ht)); }
+  if (Z.type === 'mushroom') for (let k = 0; k < 14; k++) { const a = rand() * 6.28, d = R(6, r - 3), px = Math.cos(a) * d, pz = Math.sin(a) * d, hh = R(2.5, 7), cr = R(1.5, 3.2), col = pick(gem); if (blocked(px, pz)) continue;
+    mesh(new THREE.CylinderGeometry(cr * .2, cr * .28, hh, 8), 0xe8dcc8, null, g, px, hh / 2, pz, false);
+    const cap = mesh(new THREE.SphereGeometry(cr, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), col, { emissive: col, emissiveIntensity: .7 }, g, px, hh - .2, pz, false); cap.scale.y = .5;
+    circles.push(yb({ x: x + px, z: z + pz, r: cr * .28 }, fy - 1, fy + ht)); }
+  if (Z.type === 'ruins') { for (let k = 0; k < 16; k++) { const a = k / 16 * Math.PI * 2, d = k % 2 ? 11 : 19, px = Math.cos(a) * d, pz = Math.sin(a) * d, hh = rand() < .4 ? ht : R(1.5, 7);
+      mesh(new THREE.CylinderGeometry(.9, 1, hh, 10), 0xcabf9a, null, g, px, hh / 2, pz, false); mesh(new THREE.BoxGeometry(2.4, .5, 2.4), 0xb8ac88, null, g, px, hh, pz, false);
+      circles.push(yb({ x: x + px, z: z + pz, r: 1 }, fy - 1, fy + ht)); }
+    for (let k = 0; k < 6; k++) { const a = rand() * 6.28, d = R(5, r - 4); mesh(new THREE.ConeGeometry(R(.8, 1.4), R(.6, 1), 10), 0xffcf30, { metalness: .8, roughness: .3, emissive: 0x553300 }, g, Math.cos(a) * d, .3, Math.sin(a) * d, false); } }
   // exit: light shaft + rope in the middle
-  const shaft = glowSprite(0xfff0c0, 1, .45); shaft.scale.set(2.2, ht * 1.2, 1); shaft.position.y = ht / 2; g.add(shaft);
+  const shaft = glowSprite(0xfff0c0, 1, .45); shaft.scale.set(2.4, ht * 1.2, 1); shaft.position.y = ht / 2; g.add(shaft);
   mesh(new THREE.CylinderGeometry(.05, .05, ht, 5), 0xc8a060, null, g, .4, ht / 2, 0, false);
-  const ring = new THREE.Mesh(new THREE.RingGeometry(1, 1.4, 24).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xfff0a0, transparent: true, opacity: .7 })); ring.position.y = .05; g.add(ring);
-  // treasure
+  const ring = new THREE.Mesh(new THREE.RingGeometry(1, 1.4, 24).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xfff0a0, transparent: true, opacity: .7 })); ring.position.y = .07; g.add(ring);
+  // treasure: 10 chests, some themed to the cave
   const spots = [];
-  for (let k = 0; k < 100 && spots.length < 7; k++) { const a = rand() * 6.28, d = R(4, r - 3), px = x + Math.cos(a) * d, pz = z + Math.sin(a) * d;
-    if (spots.some(s => Math.hypot(s[0] - px, s[1] - pz) < 5)) continue; spots.push([px, pz]); }
-  for (const [px, pz] of spots) { const c = makeChest(px, pz, fy, rand() * 6); c.cave = Z; c.beam.material.color.setHex(0xc080ff); yb(circles[circles.length - 1], fy - 1, fy + ht); Z.group.attach(c.g); }
-  // the surface entrance: rocky hole with a purple glow you can spot from far away
+  for (let k = 0; k < 200 && spots.length < 10; k++) { const a = rand() * 6.28, d = R(5, r - 3), px = x + Math.cos(a) * d, pz = z + Math.sin(a) * d;
+    if (spots.some(s => Math.hypot(s[0] - px, s[1] - pz) < 5) || lavaPools.some(p => Math.hypot(p.x - px, p.z - pz) < p.r + 1.5) || circles.some(c => c.maxY && Math.hypot(c.x - px, c.z - pz) < c.r + 1.2)) continue; spots.push([px, pz]); }
+  for (const [px, pz] of spots) { const c = makeChest(px, pz, fy, rand() * 6); c.cave = Z; c.beam.material.color.setHex(T.beam); yb(circles[circles.length - 1], fy - 1, fy + ht);
+    if (T.theme && rand() < .45) { c.theme = T.theme; c.rich = 2 + Math.floor(rand() * 3); } Z.group.attach(c.g); }
+  // the surface entrance: rocky hole glowing in the cave's colour
   const ex = Z.ent.x, ez = Z.ent.z, ey = getH(ex, ez); Z.ent.y = ey;
   const eg = new THREE.Group(); eg.position.set(ex, ey, ez); scene.add(eg);
   const hole = new THREE.Mesh(new THREE.CircleGeometry(1.9, 20).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x07040c })); hole.position.y = .08; eg.add(hole);
   for (let k = 1; k < 8; k++) { const a = k / 8 * Math.PI * 2, rr = R(.9, 1.3);
     const m = mesh(new THREE.DodecahedronGeometry(rr, 0), pick(rockC), null, eg, Math.cos(a) * 2.8, rr * .5, Math.sin(a) * 2.8); m.rotation.set(rand() * 3, rand() * 3, rand() * 3);
     circles.push(yb({ x: ex + Math.cos(a) * 2.8, z: ez + Math.sin(a) * 2.8, r: rr * .8 }, ey - 2, ey + 3)); }
-  for (let k = 0; k < 5; k++) { const a = R(.5, 5.8), col = pick(crCols); const cr = mesh(new THREE.OctahedronGeometry(R(.3, .6), 0), col, { emissive: col, emissiveIntensity: 1 }, eg, Math.cos(a) * 3.6, .4, Math.sin(a) * 3.6, false); cr.scale.y = 2; }
-  const beam = glowSprite(0xb080ff, 1, .5); beam.scale.set(2.5, 22, 1); beam.position.y = 11; eg.add(beam);
-  const hg = glowSprite(0x8040ff, 6, .7); hg.position.y = .6; eg.add(hg);
+  for (let k = 0; k < 5; k++) { const a = R(.5, 5.8), col = pick(gem); const cr = mesh(new THREE.OctahedronGeometry(R(.3, .6), 0), col, { emissive: col, emissiveIntensity: 1 }, eg, Math.cos(a) * 3.6, .4, Math.sin(a) * 3.6, false); cr.scale.y = 2; }
+  const beam = glowSprite(T.beam, 1, .5); beam.scale.set(2.5, 22, 1); beam.position.y = 11; eg.add(beam);
+  const hg = glowSprite(T.beam, 6, .7); hg.position.y = .6; eg.add(hg);
   structures.push({ x, z, r: r + 6, kind: 'cavezone' }, { x: ex, z: ez, r: 6, kind: 'caveent' });
 }
 // ---------- biomes and their structures
@@ -532,7 +562,7 @@ function buildBiome(b) {
         mesh(new THREE.CylinderGeometry(.22, .22, .8, 6), 0x3f9a4a, null, g, cx - x + s * .95, cy + hh * .55 + .4, cz - z); }
       circles.push({ x: cx, z: cz, r: .5 }); }
   } else if (b.type === 'volcano') { // lava crater that burns, fire treasure on the rim
-    const ly = getH(x, z) + 3; b.lavaY = ly; b.lavaR = 7.5;
+    const ly = getH(x, z) + 3; b.lavaY = ly; b.lavaR = 7.5; lavaPools.push({ x, z, y: ly, r: b.lavaR });
     const lava = new THREE.Mesh(new THREE.CircleGeometry(b.lavaR + 1.5, 28).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xff5a10 })); lava.position.set(0, ly - gy0, 0); g.add(lava); b.lava = lava;
     for (let k = 0; k < 4; k++) { const gl = glowSprite(0xff7020, 10, .7); gl.position.set(R(-3, 3), ly - gy0 + 1.5, R(-3, 3)); g.add(gl); }
     addHazard(x, ly, z, b.lavaR, 1e9, 40, { fire: 3 }, 0xff5a10);
@@ -654,6 +684,8 @@ const BASE = {
   helmet: { e: '🪖', p: 3, w: 4, armor: 'head', def: 4 }, chestplate: { e: '🦺', p: 3, w: 4, armor: 'chest', def: 8 }, leggings: { e: '👖', p: 3, w: 4, armor: 'legs', def: 6 },
   // --- 6 power items with new abilities
   pickaxe: { e: '⛏️', p: 5, w: 4 }, void: { e: '🕳️', p: 4, w: 3 }, sun: { e: '☀️', p: 4, w: 3 }, chain: { e: '⛓️', p: 4, w: 4 }, echo: { e: '🔊', p: 3, w: 3 }, ghost: { e: '👻', p: 3, w: 3 },
+  // --- 5 more: anchor, lantern, battery, cactus (thorns), crown
+  anchor: { e: '⚓', p: 6, w: 4 }, lantern: { e: '🏮', p: 3, w: 4 }, battery: { e: '🔋', p: 3, w: 3 }, thorns: { e: '🌵', p: 3, w: 4 }, crown: { e: '👑', p: 3, w: 2 },
   // --- bag: wear in the bag slot for more inventory space; only merges with other bags
   bag: { e: '🎒', p: 1, w: 3, bag: true },
   // --- SUPER RARE: very low drop chance, each gives a right-click ability (kept through fusions)
@@ -673,14 +705,14 @@ const ABIL = {
 const NOUN = { sword: 'Sword', bow: 'Bow', wand: 'Wand', stick: 'Stick', rock: 'Rock', bomb: 'Bomb', fire: 'Fireball', ice: 'Ice Shard', spark: 'Spark', boots: 'Boots', rocket: 'Rocket', feather: 'Wings', shield: 'Shield', potion: 'Potion', magnet: 'Magnet', clover: 'Clover',
   axe: 'Axe', hammer: 'Hammer', trident: 'Trident', boomerang: 'Boomerang', poison: 'Spore', wind: 'Tornado', star: 'Star', heart: 'Heart', moon: 'Moon Charm', hourglass: 'Hourglass',
   knife: 'Dagger', gem: 'Gem', eye: 'Evil Eye', skull: 'Skull', coins: 'Coin Bag', bell: 'Bell', web: 'Web', mirror: 'Mirror', meat: 'Meat', horn: 'Horn',
-  spring: 'Spring', glider: 'Glider', fin: 'Fin', skate: 'Skateboard', ufo: 'Saucer', helmet: 'Helmet', chestplate: 'Chestplate', leggings: 'Leggings', bag: 'Bag', pickaxe: 'Pickaxe', void: 'Void Orb', sun: 'Sun Stone', chain: 'Chain', echo: 'Echo Shell', ghost: 'Ghost',
+  spring: 'Spring', glider: 'Glider', fin: 'Fin', skate: 'Skateboard', ufo: 'Saucer', helmet: 'Helmet', chestplate: 'Chestplate', leggings: 'Leggings', bag: 'Bag', pickaxe: 'Pickaxe', void: 'Void Orb', sun: 'Sun Stone', chain: 'Chain', echo: 'Echo Shell', ghost: 'Ghost', anchor: 'Anchor', lantern: 'Lantern', battery: 'Battery', thorns: 'Cactus', crown: 'Crown',
   meteor: 'Meteor Stone', blink: 'Portal Orb', dragon: 'Dragon Soul', nova: 'Frost Core', rainbow: 'Rainbow Charm', storm: 'Storm Cloud' };
 const ADJ = { sword: 'Bladed', bow: "Archer's", wand: 'Magic', stick: 'Wooden', rock: 'Heavy', bomb: 'Explosive', fire: 'Flaming', ice: 'Frost', spark: 'Thunder', boots: 'Swift', rocket: 'Rocket', feather: 'Winged', shield: 'Guardian', potion: 'Vampiric', magnet: 'Seeking', clover: 'Lucky',
   axe: 'Cleaving', hammer: 'Crushing', trident: 'Piercing', boomerang: 'Returning', poison: 'Toxic', wind: 'Gusty', star: 'Starry', heart: 'Hearty', moon: 'Lunar', hourglass: 'Hasty',
   knife: 'Quick', gem: 'Jeweled', eye: 'Cursed', skull: 'Reaping', coins: 'Golden', bell: 'Ringing', web: 'Sticky', mirror: 'Mirrored', meat: 'Feasting', horn: 'Fearsome',
-  spring: 'Bouncy', glider: 'Gliding', fin: 'Aquatic', skate: 'Rolling', ufo: 'Hovering', helmet: 'Helmeted', chestplate: 'Armored', leggings: 'Plated', bag: 'Roomy', pickaxe: 'Digging', void: 'Void', sun: 'Solar', chain: 'Chained', echo: 'Echoing', ghost: 'Haunted',
+  spring: 'Bouncy', glider: 'Gliding', fin: 'Aquatic', skate: 'Rolling', ufo: 'Hovering', helmet: 'Helmeted', chestplate: 'Armored', leggings: 'Plated', bag: 'Roomy', pickaxe: 'Digging', void: 'Void', sun: 'Solar', chain: 'Chained', echo: 'Echoing', ghost: 'Haunted', anchor: 'Anchored', lantern: 'Glowing', battery: 'Charged', thorns: 'Thorny', crown: 'Royal',
   meteor: 'Meteoric', blink: 'Warping', dragon: 'Draconic', nova: 'Glacial', rainbow: 'Prismatic', storm: 'Stormcalling' };
-const CORE_ORDER = ['meteor', 'blink', 'dragon', 'nova', 'rainbow', 'storm','bomb', 'rock', 'fire', 'ice', 'spark', 'poison', 'wind', 'web', 'star', 'bell', 'boots', 'rocket', 'feather', 'ufo', 'glider', 'spring', 'skate', 'fin', 'heart', 'shield', 'mirror', 'potion', 'meat', 'magnet', 'clover', 'gem', 'eye', 'skull', 'horn', 'coins', 'moon', 'hourglass', 'pickaxe', 'void', 'sun', 'chain', 'echo', 'ghost', 'bag', 'stick'];
+const CORE_ORDER = ['meteor', 'blink', 'dragon', 'nova', 'rainbow', 'storm','bomb', 'rock', 'fire', 'ice', 'spark', 'poison', 'wind', 'web', 'star', 'bell', 'boots', 'rocket', 'feather', 'ufo', 'glider', 'spring', 'skate', 'fin', 'heart', 'shield', 'mirror', 'potion', 'meat', 'magnet', 'clover', 'gem', 'eye', 'skull', 'horn', 'coins', 'moon', 'hourglass', 'pickaxe', 'void', 'sun', 'chain', 'echo', 'ghost', 'anchor', 'lantern', 'battery', 'thorns', 'crown', 'bag', 'stick'];
 const MELEE_W = ['sword', 'axe', 'hammer', 'trident', 'knife'], SHOOT_W = ['bow', 'wand', 'boomerang'];
 const TIERS = [null, ['Common', '#9aa5b1'], ['Uncommon', '#4caf50'], ['Rare', '#2f8fff'], ['Epic', '#a64dff'], ['Legendary', '#ff9800'], ['Mythic', '#ff3d7f'], ['Divine', '#40ffe0'], ['Cosmic', '#ffffff']];
 const tierOf = t => TIERS[Math.min(t, 8)];
@@ -767,6 +799,11 @@ const ART = {
   chain: [[pE(22, 50, 15, 10), null, '#aab4c0', 7], [pE(50, 50, 10, 15), null, '#c8d2de', 7], [pE(78, 50, 15, 10), null, '#aab4c0', 7]],
   echo: [['M12 38L30 38L54 16L54 84L30 62L12 62Z', '#8a93a8'], ['M64 36Q74 50 64 64', null, '#e6f6ff', 5], ['M74 26Q90 50 74 74', null, '#e6f6ff', 5], ['M84 16Q104 50 84 84', null, '#bfe4ff', 4]],
   ghost: [['M20 92L20 44C20 12 80 12 80 44L80 92L70 82L60 92L50 82L40 92L30 82Z', '#f2f2ff'], [pC(38, 44, 7), '#2a2240'], [pC(62, 44, 7), '#2a2240'], [pE(50, 62, 6, 8), '#2a2240'], [pC(30, 58, 5), '#ffc0d8']],
+  anchor: [[pC(50, 12, 8), null, '#8a93a8', 5], ['M46 18L54 18L54 84L46 84Z', '#8a93a8'], ['M28 28L72 28L72 36L28 36Z', '#8a93a8'], ['M16 58C16 88 84 88 84 58', null, '#8a93a8', 8], ['M6 64L16 48L26 64Z', '#8a93a8'], ['M74 64L84 48L94 64Z', '#8a93a8']],
+  lantern: [['M38 16C38 2 62 2 62 16', null, '#555b66', 4], ['M30 16L70 16L66 26L34 26Z', '#c03030'], ['M32 26L68 26L68 78L32 78Z', '#ffd870'], [pE(50, 54, 8, 14), '#ff9020'], [pE(50, 58, 4, 7), '#fff3b0'], ['M32 26L32 78M68 26L68 78', null, '#6a3a1a', 3], ['M28 78L72 78L68 90L32 90Z', '#c03030']],
+  battery: [['M24 22L76 22L76 94L24 94Z', '#3a3f4a'], ['M40 10L60 10L60 22L40 22Z', '#b8c4d0'], ['M30 62L70 62L70 88L30 88Z', '#5aff6a'], ['M56 28L40 56L50 56L44 80L64 46L53 46L60 28Z', '#fff04a']],
+  thorns: [['M40 90L40 22C40 8 60 8 60 22L60 90Z', '#3f9a4a'], ['M40 58L28 58C18 58 18 46 18 36L27 36L27 49L40 49Z', '#3f9a4a'], ['M60 48L73 48L73 30L82 30C82 44 82 56 72 56L60 56Z', '#3f9a4a'], ['M36 30L42 30M58 40L64 40M36 72L42 72M58 76L64 76M22 42L26 42M76 38L80 38', null, '#e6f6d0', 2], ['M30 86L70 86L66 99L34 99Z', '#c86a3a'], [pC(50, 9, 6), '#ff6ab0']],
+  crown: [['M10 76L16 28L35 52L50 20L65 52L84 28L90 76Z', '#ffcf30'], ['M10 70L90 70L90 86L10 86Z', '#e0a020'], [pC(50, 78, 5), '#ff3060'], [pC(28, 78, 4), '#40c0ff'], [pC(72, 78, 4), '#40c0ff'], [pC(16, 26, 5), '#fff3a0'], [pC(50, 18, 5), '#fff3a0'], [pC(84, 26, 5), '#fff3a0']],
   meteor: [['M94 6L36 46L54 64Z', 'rgba(255,150,50,.75)'], ['M86 8L42 46L50 54Z', 'rgba(255,230,120,.8)'], [pC(38, 62, 25), '#8a5a40'], [pC(30, 56, 6), '#6a4030'], [pC(46, 72, 5), '#6a4030'], [pC(44, 52, 3), '#6a4030']],
   blink: [[pC(50, 50, 42), '#5a2ad0'], [pC(50, 50, 31), '#7a4aff'], [pC(50, 50, 20), '#a888ff'], [pC(50, 50, 9), '#ffffff'], ['M50 8A42 42 0 0 1 92 50', null, '#d8c8ff', 4], ['M50 92A42 42 0 0 1 8 50', null, '#d8c8ff', 4]],
   dragon: [['M10 64L38 42L54 16L62 34L86 38L94 54L72 60L82 76L56 70L40 88Z', '#3cb043'], ['M54 16L48 2L62 12Z', '#f0ead8'], ['M62 34L60 20L70 30Z', '#f0ead8'], [pC(64, 46, 5), '#ffd84a'], ['M86 52L94 54', null, '#2a2a2a', 2], ['M94 54L100 48M94 54L100 60', null, '#ff7a2a', 3]],
@@ -942,6 +979,11 @@ function describe(it) {
   if (t.chain) L.push(`⛓️ Hooks enemies and yanks them toward you`);
   if (t.echo) L.push(`🔊 Every hit echoes again for ${Math.round(Math.min(1, .5 * t.echo) * 100)}% damage`);
   if (t.ghost) L.push(`👻 Defeated enemies release a ghost that attacks another`);
+  if (t.anchor) L.push(`⚓ Hits slam enemies down (stun), +${60 * t.anchor}% damage to flying enemies`);
+  if (t.lantern) L.push(`🏮 +${30 * t.lantern}% damage at night and underground`);
+  if (t.battery) L.push(`🔋 Every ${Math.max(2, 5 - t.battery)}th attack is SUPERCHARGED (3x damage + lightning)`);
+  if (t.thorns) L.push(`🌵 Enemies that hit you take ${10 * t.thorns}+ damage back`);
+  if (t.crown) L.push(`👑 Items sell for +${50 * t.crown}% and monsters drop +${25 * t.crown}% coins`);
   if (t.ufo) L.push(`🛸 Hold jump in the air to fly up (${(1.2 * t.ufo).toFixed(1)}s)`);
   for (const cb of combosOf(t)) L.push(`<b style="color:#7affd0">🌟 COMBO: ${cb.name}</b> — ${cb.desc}`);
   if ((it.tier >= 7 || isRareT(t)) && t.bomb) L.push('<b style="color:#ffb060">💥 Blasts real craters into the ground</b>');
@@ -991,7 +1033,7 @@ function infoHTML(it, worn) { const [tn, tc] = tierOf(it.tier);
 function showInfo(it, worn) { infoEl.innerHTML = infoHTML(it, worn); infoEl.style.display = 'block';
   if (isTouch) { clearTimeout(renderInv.hideT); renderInv.hideT = setTimeout(() => infoEl.style.display = 'none', 4000); } }
 function equipAuto(it) { const s = EQUIP_SLOTS.find(sl => fitsSlot(it, sl) && !armor[sl]); if (!s) return false; armor[s] = it; discover(it); renderInv(); return s; }
-function sellPrice(it) { return Math.max(1, Math.round((4 * Math.pow(ingredients(it), 1.4) + it.power * .25) * (isRareT(it.traits) ? 4 : 1))); }
+function sellPrice(it) { return Math.max(3, Math.round((10 * ingredients(it) + it.power * .6) * (1 + .1 * (it.tier - 1)) * (isRareT(it.traits) ? 3 : 1) * (1 + .5 * (curT().crown || 0)))); }
 function sellItem(i) {
   const it = getSlot(i); if (!it) return; const price = sellPrice(it);
   setSlot(i, null); renderInv(); addCoins(price);
@@ -1128,6 +1170,94 @@ function sfx(f = 440, d = .1, type = 'square', v = .05, slide = 0) {
   g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(.0001, t + d); o.connect(g).connect(actx.destination); o.start(t); o.stop(t + d + .02);
 }
 
+// ============================================================ music: generated live, never loops the same way twice
+// Three moods (day / night / underground). Each song section picks a chord progression and writes a new melody,
+// 4 sections per cycle (~1.5 min), then the whole thing re-rolls with new melodies and a new key.
+const SCALES = { major: [0, 2, 4, 5, 7, 9, 11], minor: [0, 2, 3, 5, 7, 8, 10], dorian: [0, 2, 3, 5, 7, 9, 10] };
+const MOODS = {
+  day: { bpm: 100, scale: 'major', root: 60, keys: [0, 2, -3, 5], progs: [[0, 4, 5, 3], [0, 5, 3, 4], [3, 4, 0, 5], [5, 3, 0, 4], [0, 3, 4, 4], [3, 0, 4, 5]], lead: 'triangle', drums: 2, arp: true, density: .8 },
+  night: { bpm: 80, scale: 'minor', root: 57, keys: [0, 3, -2, 5], progs: [[0, 5, 2, 6], [0, 3, 6, 4], [5, 6, 0, 0], [0, 6, 5, 4], [3, 4, 0, 6]], lead: 'sine', drums: 1, arp: true, density: .55 },
+  cave: { bpm: 68, scale: 'dorian', root: 50, keys: [0, 2, -2], progs: [[0, 0, 3, 3], [0, 6, 3, 4], [0, 3, 0, 6], [4, 3, 0, 0]], lead: 'sine', drums: 0, arp: false, density: .35 },
+};
+const music = { started: false, next: 0, step: 0, bar: 0, mood: 'day', sec: null, cycle: 0, key: 0 };
+const mtof = m => 440 * Math.pow(2, (m - 69) / 12);
+function initMusic() {
+  if (!actx || music.started) return; music.started = true;
+  const out = actx.createGain(); out.gain.value = 0; music.out = out;
+  const lp = actx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 6000; music.lp = lp;
+  const comp = actx.createDynamicsCompressor(); comp.threshold.value = -18; comp.ratio.value = 3;
+  out.connect(lp).connect(comp).connect(actx.destination);
+  // echo bus (lead + bells)
+  const dly = actx.createDelay(1.5), fb = actx.createGain(), wet = actx.createGain(); fb.gain.value = .35; wet.gain.value = .3;
+  dly.connect(fb).connect(dly); dly.connect(wet).connect(out); music.echo = dly;
+  // white noise for drums
+  const nb = actx.createBuffer(1, actx.sampleRate * .5, actx.sampleRate), d = nb.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; music.noise = nb;
+  music.next = actx.currentTime + .15; setMusicVolume();
+}
+function setMusicVolume() { if (music.out) music.out.gain.setTargetAtTime((settings.music ?? .5) * .5 * (state === 'paused' || state === 'book' ? .35 : 1), actx.currentTime, .3); }
+const mrand = { s: 1, r() { this.s = (this.s * 16807) % 2147483647; return this.s / 2147483647; } };
+function newSection() {
+  const M = MOODS[music.mood], sc = SCALES[M.scale];
+  const prog = M.progs[Math.floor(mrand.r() * M.progs.length)];
+  // a melodic motif: rhythm (8 eighth-notes per bar, 2 bars) + scale-degree offsets
+  const motif = []; for (let i = 0; i < 16; i++) { const strong = i % 4 === 0; motif.push(mrand.r() < (strong ? .9 : M.density * .6) ? { deg: Math.floor(mrand.r() * 5) - 1 + (strong ? 0 : (mrand.r() < .5 ? 1 : -1)), len: strong && mrand.r() < .5 ? 2 : 1 } : null); }
+  const motifB = motif.map(n => n && mrand.r() < .4 ? { deg: n.deg + (mrand.r() < .5 ? 2 : -2), len: n.len } : n);
+  music.sec = { prog, motif, motifB, sc, M };
+}
+function noteOn(t, freq, dur, type, vol, dest, opts = {}) {
+  const o = actx.createOscillator(), g = actx.createGain(); o.type = type; o.frequency.setValueAtTime(freq, t);
+  if (opts.vib) { const l = actx.createOscillator(), lg = actx.createGain(); l.frequency.value = 5; lg.gain.value = freq * .006; l.connect(lg).connect(o.frequency); l.start(t); l.stop(t + dur + .3); }
+  if (opts.detune) o.detune.value = opts.detune;
+  const a = opts.attack ?? .01, r = opts.release ?? .25;
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + a); g.gain.setTargetAtTime(vol * (opts.sustain ?? .6), t + a, dur * .4); g.gain.setTargetAtTime(0, t + dur, r / 3);
+  o.connect(g); g.connect(dest); if (opts.echo) g.connect(music.echo);
+  o.start(t); o.stop(t + dur + r + .1);
+}
+function drum(t, kind, vol) {
+  if (kind === 'kick') { const o = actx.createOscillator(), g = actx.createGain(); o.frequency.setValueAtTime(130, t); o.frequency.exponentialRampToValueAtTime(40, t + .18);
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.001, t + .25); o.connect(g).connect(music.out); o.start(t); o.stop(t + .3); return; }
+  const s = actx.createBufferSource(), f = actx.createBiquadFilter(), g = actx.createGain(); s.buffer = music.noise;
+  f.type = kind === 'hat' ? 'highpass' : 'bandpass'; f.frequency.value = kind === 'hat' ? 7000 : 1800;
+  const len = kind === 'hat' ? .05 : .15; g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.001, t + len);
+  s.connect(f).connect(g).connect(music.out); s.start(t); s.stop(t + len + .02);
+}
+function playStep(t) {
+  const S = music.sec, M = S.M, sc = S.sc, eighth = 30 / M.bpm, step = music.step % 8, bar = music.bar;
+  const root = M.root + music.key, chordDeg = S.prog[bar % 4];
+  const degToMidi = (d, base = root) => base + sc[((d % 7) + 7) % 7] + 12 * Math.floor(d / 7);
+  const chord = [chordDeg, chordDeg + 2, chordDeg + 4];
+  const sectionBar = bar % 8, lastBar = sectionBar === 7;
+  // pad: each bar, soft detuned chord
+  if (step === 0) for (const d of chord) for (const dt of [-7, 7]) noteOn(t, mtof(degToMidi(d) - 12), eighth * 8, M === MOODS.day ? 'triangle' : 'sawtooth', M === MOODS.day ? .022 : .016, music.out, { attack: eighth * 2, release: eighth * 4, detune: dt, sustain: .8 });
+  // bass
+  if (step === 0 || (step === 4 && M.bpm > 70) || (step === 6 && M === MOODS.day && mrand.r() < .4)) noteOn(t, mtof(degToMidi(chordDeg) - 24), eighth * (step === 0 ? 3 : 1.6), 'triangle', .13, music.out, { release: .15 });
+  // arpeggio
+  if (M.arp && step % (M === MOODS.night ? 2 : 1) === 0) { const d = chord[[0, 1, 2, 1, 0, 2, 1, 2][step]] + (step > 3 ? 7 : 0); noteOn(t, mtof(degToMidi(d)), eighth * .8, 'square', .012, music.out, { release: .1, sustain: .3 }); }
+  // lead melody: motif A, A, B, cadence
+  const half = sectionBar % 2, mot = sectionBar < 4 ? S.motif : S.motifB, n = mot[half * 8 + step];
+  if (lastBar) { if (step === 0) noteOn(t, mtof(degToMidi(chordDeg) + 12), eighth * 6, M.lead, .06, music.out, { vib: true, echo: true, release: .6 }); }
+  else if (n) { const d = chordDeg + n.deg; noteOn(t, mtof(degToMidi(d) + 12), eighth * n.len * .95, M.lead, M === MOODS.cave ? .045 : .055, music.out, { vib: true, echo: true, release: .3 }); }
+  // bells in the dark
+  if (M !== MOODS.day && step === 3 && mrand.r() < .35) noteOn(t, mtof(degToMidi(chord[Math.floor(mrand.r() * 3)]) + 24), eighth * 3, 'sine', .025, music.out, { echo: true, release: 1.2, sustain: .2 });
+  // drums
+  if (M.drums) { if (step === 0 || (step === 4 && M.drums > 1)) drum(t, 'kick', .22); if (M.drums > 1 && step % 2 === 1) drum(t, 'hat', .025); if (M.drums > 1 && (step === 2 || step === 6) && sectionBar > 3) drum(t, 'snare', .04); if (M.drums === 1 && step === 4) drum(t, 'hat', .02); }
+  // advance
+  music.step++; if (music.step % 8 === 0) { music.bar++;
+    if (music.bar % 8 === 0) { // new section; every 4 sections a new cycle (new key)
+      const want = player.under ? 'cave' : isNight ? 'night' : 'day';
+      if (want !== music.mood || music.bar % 32 === 0) { music.mood = want; const ks = MOODS[want].keys; music.key = ks[Math.floor(mrand.r() * ks.length)]; }
+      newSection(); } }
+}
+function updateMusic() {
+  if (!music.started) return;
+  if (state !== music.lastState) { music.lastState = state; setMusicVolume(); }
+  // switch mood quickly when going underground / night falls
+  const want = player.under ? 'cave' : isNight ? 'night' : 'day';
+  if (want !== music.mood && music.step % 8 === 0) { music.mood = want; music.key = 0; newSection(); }
+  if (music.next < actx.currentTime - .1) music.next = actx.currentTime + .05; // tab was asleep: don't burst
+  while (music.next < actx.currentTime + .3) { const eighth = 30 / music.sec.M.bpm; playStep(music.next); music.next += eighth; }
+}
+
 // ============================================================ particles / effects
 const pGeo = new THREE.BoxGeometry(.16, .16, .16), pMats = {};
 const pmat = c => pMats[c] || (pMats[c] = new THREE.MeshBasicMaterial({ color: c }));
@@ -1217,7 +1347,7 @@ function openChest(c) {
     setTimeout(() => spawnLoot(it, c.x, c.z, true, 1), k * 150);
   }
   // money pops out of the chest
-  const amt = Math.round((c.cave ? R(40, 90) : R(8, 20)) * (1 + .5 * (dayNum - 1)));
+  const amt = Math.round((c.cave ? R(40, 90) * (c.cave.type === 'ruins' ? 2 : 1) : R(8, 20)) * (1 + .5 * (dayNum - 1)));
   if (c.cave || rand() < .75) setTimeout(() => spawnCoins(amt, c.x, c.y, c.z), 200);
   if (rand() < (c.cave ? .2 : .08)) { const rk = pick(RARE_KEYS); setTimeout(() => spawnLoot(baseItem(rk), c.x, c.z, true, 1), n * 150); } // small chance of a super rare
 }
@@ -1341,6 +1471,7 @@ function hurtPlayer(d, src) {
   if (T.mirror && T.shield && rand() < .3) { player.invuln = .3; dmgText(eyePos().addScaledVector(lookDir(), 2), 'PARRY!', '#9fe8ff', 24); sfx(1400, .15, 'square', .05, .5);
     if (src && !src.dead) { lightning(eyePos(), mCenter(src)); applyHit(src, d * 2 + heldPower(), {}, null, { noExplode: true }); } return; }
   if (T.mirror && src && !src.dead) applyHit(src, d * .5 * T.mirror, {}, null, { noExplode: true }); // reflect back
+  if (T.thorns && src && !src.dead && src.hp !== undefined) applyHit(src, 10 * T.thorns + heldPower() * .3, {}, null, { splash: true, noExplode: true });
   if (T.shield) d *= Math.pow(.7, T.shield);
   const def = armorDefTotal(); if (def) d *= 50 / (50 + def);
   player.hp -= d; player.invuln = .45; player.hurtT = 0;
@@ -1542,6 +1673,8 @@ function applyHit(m, dmg, T, dir, opts = {}) {
   if (m.dead) return;
   let crit = false; if (T.clover && rand() < Math.min(.8, .12 * T.clover)) { dmg *= 2; crit = true; }
   if (T.meat && T.axe && player.hp < player.max * .4) dmg *= 2; // BERSERKER
+  if (T.lantern && (isNight || player.under)) dmg *= 1 + .3 * T.lantern;
+  if (T.anchor && !opts.splash) { m.stun = Math.max(m.stun, .5 + .2 * T.anchor); if (m.fly) { dmg *= 1 + .6 * T.anchor; m.y -= 1.5; } }
   if (crit && T.coins && T.clover && !opts.splash) spawnCoins(Math.max(2, Math.round(m.d.coin * .3 * Math.pow(1.6, m.lvl))), m.x, m.y, m.z); // GOLD RUSH
   if (T.ice && T.web) { m.stun = Math.max(m.stun, 1.5); m.flash = .3; } // FROZEN PRISON
   if (T.wind && T.spark && !opts.splash && rand() < .25) { const sc = mCenter(m); lightning(sc.clone().add(new V3(R(-1, 1), 16, R(-1, 1))), sc); flash(sc, 0xfff7a0, 7, .3); sfx(80, .4, 'sawtooth', .07, .5); // STORM CALLER
@@ -1590,7 +1723,7 @@ function killMonster(m) {
     if (T.heart && T.skull) { const hl = player.max * .15; player.hp = Math.min(player.max, player.hp + hl); dmgText(eyePos().addScaledVector(lookDir(), 2), '+' + Math.round(hl), '#ff6b9a', 20); }
     if (T.ghost) for (let g = 0; g < (T.skull ? 3 : 1); g++) setTimeout(() => { const t = nearestMonster(c, 18, o => !o.dead); if (!t) return; const tc = mCenter(t);
       for (let k = 0; k <= 6; k++) burst(c.clone().lerp(tc, k / 6), 0xe8e8ff, 2, 1, .5, -1); applyHit(t, heldPower() * (1 + .5 * T.ghost), {}, null, { splash: true }); flash(tc, 0xd0d0ff, 3, .3); }, 250 + g * 200); }
-  const gold = Math.max(1, Math.round(m.d.coin * Math.pow(1.6, m.lvl) * (1 + .3 * (curT().coins || 0)) * R(.85, 1.15)));
+  const gold = Math.max(1, Math.round(m.d.coin * Math.pow(1.6, m.lvl) * (1 + .3 * (curT().coins || 0) + .25 * (curT().crown || 0)) * R(.85, 1.15)));
   if (m.d.king) { // big money + a super rare item (sometimes already merged)
     spawnCoins(gold, m.x, m.y, m.z); let it = baseItem(pick(RARE_KEYS)); const nm = Math.floor(rand() * 3); for (let k = 0; k < nm; k++) it = mergeItems(it, baseItem(randomBaseKey(NONBAG)));
     spawnLoot(it, m.x, m.z, true, 1); flash(c, 0xffd84a, 12, .6);
@@ -1757,7 +1890,9 @@ function attack() {
     dmgText(eyePos().addScaledVector(lookDir(), 2), '+' + heal, '#6bff8a', 24); burst(frontPos(), 0x6bff8a, 16, 3, .8, -2);
     sfx(500, .25, 'sine', .06, 2); player.cd = .5; return;
   }
-  const st = itemStats(it); player.cd = st.cd;
+  let st = itemStats(it); player.cd = st.cd;
+  if (T.battery) { player.charge = (player.charge || 0) + 1; if (player.charge >= Math.max(2, 5 - T.battery)) { player.charge = 0; st = Object.assign({}, st, { dmg: st.dmg * 3, pdmg: st.pdmg * 3 }); T.spark = (T.spark || 0) + 1;
+    flash(frontPos(), 0x9fffa0, 4, .3); sfx(1000, .2, 'sawtooth', .05, 1.8); } }
   // Divine+ (tier 7+) or super rare explosive weapons blow real craters into the ground
   if (it && (it.tier >= 7 || isRareT(it.traits)) && T.bomb) T.dig = 1 + Math.max(0, it.tier - 7) * .3;
   if (T.pickaxe && !player.under) { const gp = aimPoint(7); if (gp.distanceTo(eyePos()) < 7.5) { deformTerrain(gp.x, gp.z, 1.2 + .3 * T.pickaxe, .8 + .5 * T.pickaxe); sfx(150, .1, 'square', .05, .5); } }
@@ -1951,11 +2086,13 @@ function applySettings() {
   setTouchUI(settings.touch === 'on' ? true : settings.touch === 'off' ? false : autoTouch);
   document.getElementById('vBright').textContent = Math.round(settings.bright * 100) + '%';
   document.getElementById('vSens').textContent = settings.sens.toFixed(1) + '×';
+  document.getElementById('vMusic').textContent = Math.round(settings.music * 100) + '%'; if (music.started) setMusicVolume();
 }
 const sB = document.getElementById('sBright'), sS = document.getElementById('sSens'), sT = document.getElementById('sTouch');
 sB.value = settings.bright; sS.value = settings.sens; sT.value = settings.touch;
 sB.oninput = () => { settings.bright = +sB.value; applySettings(); saveSettings(); };
 sS.oninput = () => { settings.sens = +sS.value; applySettings(); saveSettings(); };
+const sMu = document.getElementById('sMusic'); sMu.value = settings.music; sMu.oninput = () => { settings.music = +sMu.value; applySettings(); saveSettings(); };
 sT.onchange = () => { settings.touch = sT.value; applySettings(); saveSettings(); };
 let stateBeforeSettings = 'menu';
 function openSettings() {
@@ -2019,7 +2156,7 @@ function updateSky(dt) {
   cSky.copy(cNight).lerp(cDay, dayF).lerp(cSet, setF * .55);
   cSky.multiplyScalar(.88 * clamp(settings.bright, .45, 1.15)); // sky follows the brightness setting too
   scene.background.copy(cSky); scene.fog.color.copy(cSky);
-  if (player.under) { scene.background.setHex(0x150c22); scene.fog.color.setHex(0x150c22); scene.fog.near = 8; scene.fog.far = 55; } else { scene.fog.near = 90; scene.fog.far = 320; }
+  if (player.under) { const fc = CAVE_T[player.under.type].fog; scene.background.setHex(fc); scene.fog.color.setHex(fc); scene.fog.near = 10; scene.fog.far = 70; } else { scene.fog.near = 90; scene.fog.far = 320; }
   hemi.intensity = .34 + .36 * dayF; hemi.color.setHSL(.58, .5, .6 + .2 * dayF); ambient.intensity = .14 + .06 * (1 - dayF);
   const P = player.pos;
   if (sh > -.05) { skyLight.position.copy(P).addScaledVector(sunDir, 200); skyLight.intensity = .95 * smooth(-.05, .2, sh); skyLight.color.setRGB(1, lerp(1, .7, setF), lerp(.95, .5, setF)); }
@@ -2066,7 +2203,7 @@ function drawMinimap() {
   const dot = (x, z, col, s) => { mctx.fillStyle = col; mctx.fillRect(x - P.x - s / 2, z - P.z - s / 2, s, s); };
   for (const h of houses) dot(h.x, h.z, '#8b4a2a', 7);
   for (const cv of caves) dot(cv.x, cv.z, '#3a3440', 8);
-  for (const Z of caveZones) dot(Z.ent.x, Z.ent.z, '#b070ff', 9);
+  for (const Z of caveZones) dot(Z.ent.x, Z.ent.z, CAVE_T[Z.type].col, 9);
   for (const b of biomes) if (b.lavaY !== undefined) dot(b.x, b.z, '#ff5a10', 10);
   for (const ch of chests) if (!ch.open && (!ch.cave || player.under === ch.cave)) dot(ch.x, ch.z, ch.theme ? '#ff9a40' : '#ffd040', 5);
   for (const l of loot) dot(l.x, l.z, '#ffffff', 3);
@@ -2136,7 +2273,7 @@ function update(dt) {
       if (!player.under && Math.hypot(P.x - Z.ent.x, P.z - Z.ent.z) < 1.7 && Math.abs(P.y - Z.ent.y) < 2.5) { // descend
         P.set(Z.x + 3, Z.floor + .1, Z.z); player.vy = 0; player.portalCd = 1.2; player.under = Z;
         for (const m of monsters) if (!m.cave && !m.dead) { m.dead = true; scene.remove(m.g); } // surface monsters lose you
-        if (!Z.found) { Z.found = true; toast('💎 <b style="color:#c8a0ff">You found a Crystal Cave!</b><br>Monsters lurk here day and night, but the chests are rich. Stand in the light to climb out.', 4500); }
+        if (!Z.found) { Z.found = true; toast(`⛏️ <b style="color:${CAVE_T[Z.type].col}">You found the ${CAVE_T[Z.type].name}!</b><br>Monsters lurk here day and night, but the chests are rich. Stand in the light to climb out.`, 4500); }
         sfx(200, .5, 'sine', .06, .4); flash(P.clone().add(new V3(0, 1, 0)), 0x8040ff, 6, .5); break; }
       if (player.under === Z && Math.hypot(P.x - Z.x, P.z - Z.z) < 1.3) { // climb out
         const a = rand() * 6.28; P.set(Z.ent.x + Math.cos(a) * 4.2, Z.ent.y + .5, Z.ent.z + Math.sin(a) * 4.2); player.vy = 4; player.portalCd = 1.2; player.under = null;
@@ -2144,7 +2281,7 @@ function update(dt) {
     if (player.under) { const Z = player.under, dx = P.x - Z.x, dz = P.z - Z.z, d = Math.hypot(dx, dz); if (d > Z.r - .5) { P.x = Z.x + dx / d * (Z.r - .5); P.z = Z.z + dz / d * (Z.r - .5); } }
     for (const Z of caveZones) Z.group.visible = player.under === Z;
     // volcano lava burns
-    for (const b of biomes) if (b.lavaY !== undefined && Math.hypot(P.x - b.x, P.z - b.z) < b.lavaR && P.y < b.lavaY + .4) {
+    for (const L of lavaPools) if (Math.hypot(P.x - L.x, P.z - L.z) < L.r && P.y < L.y + .4 && P.y > L.y - 3) {
       player.hp -= 30 * dt; player.hurtT = 0; if (rand() < .3) burst(P.clone(), 0xff6a1a, 3, 3, .4, -3); document.getElementById('hurt').style.opacity = .6; setTimeout(() => document.getElementById('hurt').style.opacity = 0, 100);
       if (player.hp <= 0) die(); }
     // combo + item auras
@@ -2228,7 +2365,7 @@ function loop(now) {
   requestAnimationFrame(loop);
   const dt = Math.min(.05, (now - last) / 1000); last = now;
   if (innerWidth !== fitW || innerHeight !== fitH) fitView(); // catches size changes that don't fire 'resize' (phone address bars, embeds)
-  updateRotateHint();
+  updateRotateHint(); updateMusic();
   if (state === 'play') update(dt);
   else if (state === 'menu') { camYaw += dt * .1; updateSky(0); playTime += dt; }
   updateCamera(state === 'menu' ? 1 : dt);
@@ -2256,7 +2393,7 @@ function generate() {
   const b = document.getElementById('playBtn'); b.disabled = false; b.textContent = '▶ Play';
 }
 document.getElementById('playBtn').onclick = () => {
-  try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { }
+  try { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); mrand.s = 1 + Math.floor(Math.random() * 1e6); newSection(); initMusic(); } catch (e) { }
   document.getElementById('startScreen').style.display = 'none'; state = 'play'; camYaw = Math.PI; camPitch = 0; last = performance.now();
   if (!isTouch) tryLock();
   toast('Grab the 🏹 and 🗡️, then drag one onto the other!', 3500);
