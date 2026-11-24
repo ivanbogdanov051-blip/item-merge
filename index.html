@@ -1174,8 +1174,8 @@ function makeSlotEl(i) {
   d.addEventListener('pointerdown', e => slotDown(e, i));
   d.addEventListener('pointerenter', e => hoverInfo(e, i)); d.addEventListener('pointerleave', hoverEnd);
 }
-function hoverInfo(e, ref) { if (e.pointerType !== 'mouse' || drag) return; const it = getSlot(ref); if (it) { clearTimeout(renderInv.hideT); infoEl.innerHTML = infoHTML(it, isArmorRef(ref)); infoEl.style.display = 'block'; } }
-function hoverEnd() { if (drag) return; const it = inv[sel]; if (it) { infoEl.innerHTML = infoHTML(it); infoEl.style.display = 'block'; } else infoEl.style.display = 'none'; }
+function hoverInfo() { } // item text only shows while you hold an icon down
+function hoverEnd() { }
 for (let i = 0; i < 10; i++) makeSlotEl(i);
 // the worn bag decides how many extra slots exist; items in removed slots move or drop
 function syncBag() {
@@ -1205,8 +1205,8 @@ const slotEl = r => isArmorRef(r) ? armorEls[r] : slotEls[r];
 const armorDefTotal = () => ARMOR_SLOTS.reduce((a, s) => a + (armor[s] ? armorDef(armor[s]) : 0), 0);
 function infoHTML(it, worn) { const [tn, tc] = tierOf(it.tier);
   return `<div class="nm" style="color:${tc}">${worn ? '👕 ' : ''}${it.name}</div><div style="font-size:11px;opacity:.75">${isBossT(it.traits) ? '<b style="color:#ff7a5a">☠️ BOSS ITEM</b> · ' : ''}${isRareT(it.traits) ? '<b style="color:#ff9cff">🌟 SUPER RARE</b> · ' : ''}${tn} · Power ${it.power} · Sells for 🪙 ${sellPrice(it)}</div>` + describe(it).map(l => `<div class="ln">${l}</div>`).join(''); }
-function showInfo(it, worn) { infoEl.innerHTML = infoHTML(it, worn); infoEl.style.display = 'block';
-  if (isTouch) { clearTimeout(renderInv.hideT); renderInv.hideT = setTimeout(() => infoEl.style.display = 'none', 9000); } }
+function showInfo(it, worn) { infoEl.innerHTML = infoHTML(it, worn); infoEl.style.display = 'block'; }
+function hideInfo() { infoEl.style.display = 'none'; }
 function equipAuto(it) { const s = EQUIP_SLOTS.find(sl => fitsSlot(it, sl) && !armor[sl]); if (!s) return false; armor[s] = it; discover(it); renderInv(); return s; }
 function sellPrice(it) { return Math.max(3, Math.round((10 * ingredients(it) + it.power * .6) * (1 + .1 * (it.tier - 1)) * (isRareT(it.traits) ? 3 : 1) * (isBossT(it.traits) ? 5 : 1) * (1 + .5 * (curT().crown || 0)))); }
 function sellItem(i) {
@@ -1224,7 +1224,7 @@ function renderInv() {
     if (it) { img.src = it.icon; img.style.display = 'block'; } else { img.removeAttribute('src'); img.style.display = 'none'; }
     d.classList.toggle('full', !!it); });
   const it = inv[sel];
-  if (it) showInfo(it); else infoEl.style.display = 'none';
+  if (!drag) hideInfo();
   refreshHeld();
 }
 function select(i) { sel = i; renderInv(); }
@@ -1240,6 +1240,7 @@ function slotDown(e, i) {
   e.preventDefault(); e.stopPropagation();
   if (!getSlot(i)) { if (!isArmorRef(i)) select(i); else toast(`${BASE[SLOT_KEY[i]].e} Drag a ${SLOT_NAME[i]} here to wear it`, 1800); return; }
   drag = { from: i, sx: e.clientX, sy: e.clientY, moved: false, id: e.pointerId, target: -1 };
+  showInfo(getSlot(i), isArmorRef(i)); // hold the icon to read what it does
 }
 // what happens if the dragged item lands on slot t
 function dropAction(from, t) {
@@ -1256,7 +1257,7 @@ function dropAction(from, t) {
 addEventListener('pointermove', e => {
   if (!drag || e.pointerId !== drag.id) return;
   const src = getSlot(drag.from);
-  if (!drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) > 7) { drag.moved = true; ghost.style.display = 'block'; ghost.querySelector('img').src = src.icon; }
+  if (!drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) > 7) { drag.moved = true; hideInfo(); ghost.style.display = 'block'; ghost.querySelector('img').src = src.icon; }
   if (!drag.moved) return;
   ghost.style.left = e.clientX + 'px'; ghost.style.top = e.clientY + 'px';
   const t = slotUnder(e.clientX, e.clientY);
@@ -1279,9 +1280,9 @@ addEventListener('pointermove', e => {
 });
 function endDrag(e) {
   if (!drag || e.pointerId !== drag.id) return;
-  const d = drag; drag = null; ghost.style.display = 'none';
+  const d = drag; drag = null; ghost.style.display = 'none'; hideInfo();
   slotEls.forEach(s => s.classList.remove('target')); EQUIP_SLOTS.forEach(s => armorEls[s].classList.remove('target')); sellEl.classList.remove('target');
-  if (!d.moved) { if (isArmorRef(d.from)) showInfo(armor[d.from], true); else select(d.from); return; }
+  if (!d.moved) { if (!isArmorRef(d.from)) select(d.from); return; }
   const t = slotUnder(e.clientX, e.clientY), act = dropAction(d.from, t);
   if (t === 'sell') { sellItem(d.from); return; }
   if (act === 'merge') doMerge(d.from, t);
@@ -1315,7 +1316,8 @@ function doMerge(a, b) {
   if (coins < cost) { toast(`🪙 Merging these costs <b>${cost}</b> coins (you have ${coins}).<br>Defeat monsters at night to earn more!`, 3000); sfx(140, .2, 'square', .05, .7); return; }
   coins -= cost; mergesDone++;
   const src0 = getSlot(a), src1 = getSlot(b), res = mergeItems(src0, src1);
-  setSlot(b, res); setSlot(a, null); if (!isArmorRef(b)) sel = b;
+  let dst = b, src = a; if (a === 'bag' && isBag(res)) { dst = 'bag'; src = b; } // keep a bag you were wearing worn after merging
+  setSlot(dst, res); setSlot(src, null); if (!isArmorRef(dst)) sel = dst;
   const isNew = discover(res);
   renderInv();
   toast(`✨ ${isNew ? 'NEW: ' : ''}<span style="color:${tierOf(res.tier)[1]}">${res.name}</span>`);
@@ -1686,13 +1688,14 @@ function hurtPlayer(d, src) {
 function die() {
   alive = false; player.hp = 0; attackHeld = false;
   if (locked()) document.exitPointerLock();
-  document.getElementById('deadText').innerHTML = `You survived until <b>day ${dayNum}</b> and defeated <b>${player.kills}</b> monsters.<br>${armor.bag && armor.bag.traits.voidcore ? 'You lost your items — but your 🟣 <b>Void Bag</b> and everything in it are safe.' : 'You lost all your items.'} Ready for another go?`;
+  document.getElementById('deadText').innerHTML = `You survived until <b>day ${dayNum}</b> and defeated <b>${player.kills}</b> monsters.<br>${[armor.bag, ...inv].some(it => it && it.traits.bag && it.traits.voidcore) ? 'You lost your items — but your 🟣 <b>Void Bag</b> and everything in it are safe.' : 'You lost all your items.'} Ready for another go?`;
   document.getElementById('deadScreen').style.display = 'block';
 }
 document.getElementById('respawnBtn').onclick = () => {
   for (const m of monsters) { m.dead = true; scene.remove(m.g); } monsters.length = 0; clearEProjs(); clearBossFx();
   // death = lose everything: inventory, armour and bag — unless the bag is void-bound, which keeps itself and its contents
-  const vb = armor.bag && armor.bag.traits.voidcore ? armor.bag : null, kept = vb ? inv.slice(10) : [];
+  const vbs = [armor.bag, ...inv].filter(it => it && it.traits.bag && it.traits.voidcore).sort((p, q) => q.traits.bag - p.traits.bag), vb = vbs[0] || null;
+  const kept = vb && armor.bag === vb ? inv.slice(10) : [];
   for (const s of EQUIP_SLOTS) armor[s] = null; inv.fill(null); sel = 0;
   if (vb) { armor.bag = vb; kept.forEach((it, k) => inv[10 + k] = it); }
   renderInv(); if (vb) setTimeout(() => toast(`🟣 Your <b>Void Bag</b> survived — ${kept.filter(Boolean).length} item${kept.filter(Boolean).length === 1 ? '' : 's'} kept`, 3500), 300);
