@@ -71,6 +71,18 @@
   #settings { background: rgba(8,12,28,.95); z-index: 40; }
   .screen .panel { min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 16px; }
   .screen .row { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+  #mpBox { margin-top: 16px; padding: 12px 14px; border-radius: 14px; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.18); max-width: 460px; width: 100%; box-sizing: border-box; text-align: center; }
+  #mpBox .mpt { font-weight: 800; font-size: 16px; margin-bottom: 8px; }
+  #mpBox .mpr { display: flex; gap: 8px; justify-content: center; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  #mpBox input[type=text], #mpBox input:not([type]) { font: 700 16px "Segoe UI", system-ui, sans-serif; padding: 9px 12px; border-radius: 10px; border: 2px solid rgba(255,255,255,.3); background: rgba(0,0,0,.35); color: #fff; width: 150px; }
+  #mpBox #joinCode { width: 92px; text-transform: uppercase; letter-spacing: 3px; text-align: center; }
+  #mpBox .mpor { opacity: .7; font-size: 13px; }
+  #mpBox .mpff { display: block; font-size: 13px; line-height: 1.4; cursor: pointer; text-align: left; }
+  #mpBox .mpff input { width: 18px; height: 18px; vertical-align: middle; margin-right: 4px; }
+  #mpStatus { font-size: 14px; margin-top: 8px; line-height: 1.5; } #mpStatus:empty { display: none; }
+  #mpStatus .code { font-size: 22px; letter-spacing: 4px; color: #ffd84a; user-select: all; }
+  #mpStatus button { margin-top: 6px; }
+  #mpHud { font-size: 12px; color: #9fe0ff; } #mpHud:empty { display: none; }
   .screen button.sec { background: rgba(255,255,255,.16); font-size: 16px; padding: 10px 22px; box-shadow: none; }
   .setg { display: flex; flex-direction: column; gap: 6px; width: min(380px, 90vw); text-align: left; background: rgba(255,255,255,.07); padding: 14px 16px; border-radius: 12px; margin-bottom: 16px; }
   .setg label { font-weight: 600; margin-top: 6px; }
@@ -128,6 +140,7 @@
   <div id="coins" style="font-size:16px;font-weight:800;color:#ffd84a">🪙 0</div>
   <div id="kills">⚔️ 0 &nbsp; 📖 0 items</div>
   <div id="defense" style="font-size:12px;color:#8fd0ff"></div>
+  <div id="mpHud"></div>
   <button id="gearBtn" type="button" title="Settings">⚙️</button>
   <button id="pauseBtn" type="button" title="Pause (P)">⏸️</button>
   <button id="bookBtn" type="button" title="Combo Book (B)">📖</button>
@@ -159,6 +172,13 @@
     <b>Ability</b><span>🌈 items: Right-click · R · ✨</span>
   </div></details>
   <div class="row"><button id="playBtn" disabled>Generating world…</button><button id="newWorldBtn" class="sec" type="button" style="display:none">🌍 New World</button><button id="startSettings" class="sec" type="button">⚙️ Settings</button></div>
+  <div id="mpBox">
+    <div class="mpt">👥 Multiplayer</div>
+    <div class="mpr"><input id="mpName" maxlength="14" placeholder="Your name" autocomplete="off"></div>
+    <div class="mpr" id="mpCtl"><button id="hostBtn" class="sec" type="button">👥 Host game</button><span class="mpor">or</span><input id="joinCode" maxlength="5" placeholder="CODE" autocomplete="off" autocapitalize="characters"><button id="joinBtn" class="sec" type="button">🔗 Join</button></div>
+    <label class="mpff" id="ffRow"><input type="checkbox" id="ffChk"> ⚔️ <b>Friendly fire</b>: players can hit each other. If a player defeats you, you <b>keep your loot</b>.</label>
+    <div id="mpStatus"></div>
+  </div>
 </div></div>
 <div class="screen" id="deadScreen" style="display:none"><div class="panel">
   <h1>Defeated!</h1>
@@ -192,6 +212,7 @@
 </div></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script>
 'use strict';
 // ============================================================ helpers
@@ -203,8 +224,11 @@ function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; le
 // ---- saved game (made by sleeping in a bed): the world is rebuilt from the same seed, then your progress is put back
 const SAVE_KEY = 'mq-save-v1';
 function loadSave() { try { const s = JSON.parse(localStorage.getItem(SAVE_KEY)); return s && s.v === 1 && s.seed ? s : null; } catch (e) { return null; } }
-const SAVE = loadSave();
-const WORLD_SEED = SAVE ? SAVE.seed : 1 + Math.floor(Math.random() * 1e9);
+// joining a friend's game reloads the page into THEIR world (same seed); your own save is left untouched
+const JOIN = (() => { try { const j = JSON.parse(sessionStorage.getItem('mq-join')); return j && j.seed && j.code ? j : null; } catch (e) { return null; } })();
+const SAVE = JOIN ? null : loadSave();
+const NET = { role: null, peer: null, conns: new Map(), host: null, code: null, ff: false, id: 'host', others: new Map(), sendT: 0, todT: 0, pvp: null };
+const WORLD_SEED = JOIN ? JOIN.seed : SAVE ? SAVE.seed : 1 + Math.floor(Math.random() * 1e9);
 const rand = mulberry32(WORLD_SEED);
 const R = (a, b) => a + rand() * (b - a);
 const pick = arr => arr[Math.floor(rand() * arr.length)];
@@ -1726,9 +1750,9 @@ function openChest(c) {
 // ============================================================ player
 const player = { pos: new V3(0, 0, 0), vy: 0, yaw: 0, hp: 100, max: 100, baseMax: 100, onGround: false, jumps: 0, cd: 0, swingT: 0, aimT: 0, dashT: 0, dashCd: 0, invuln: 0, hurtT: 99, walk: 0, kills: 0 };
 let alive = true;
-function buildPlayer() {
+function buildPlayer(tunic = 0x3b7dd8, hair = 0x7b4a22) {
   const g = new THREE.Group();
-  const skin = 0xffd2a8, tunic = 0x3b7dd8, pants = 0x5a3e2b, hair = 0x7b4a22;
+  const skin = 0xffd2a8, pants = 0x5a3e2b;
   mesh(new THREE.CylinderGeometry(.36, .44, .85, 10), tunic, null, g, 0, 1.08, 0);
   mesh(new THREE.CylinderGeometry(.45, .45, .12, 10), 0x6b4423, null, g, 0, .74, 0);
   mesh(new THREE.BoxGeometry(.14, .12, .06), 0xffd040, { metalness: .6 }, g, 0, .74, .44);
@@ -1884,17 +1908,24 @@ function hurtPlayer(d, src) {
 function die() {
   alive = false; player.hp = 0; attackHeld = false;
   if (locked()) document.exitPointerLock();
+  player.pvpBy = NET.pvp; // defeated by another player (friendly fire): you keep everything
+  if (player.pvpBy) { netSend({ t: 'kill', id: NET.id, n: myName(), by: player.pvpBy.n, byId: player.pvpBy.id });
+    document.getElementById('deadText').innerHTML = `⚔️ <b>${esc(player.pvpBy.n)}</b> defeated you!<br>A player beat you, so <b style="color:#8fff9a">you keep all your items</b>.`;
+    document.getElementById('deadScreen').style.display = 'block'; return; }
   document.getElementById('deadText').innerHTML = `You survived until <b>day ${dayNum}</b> and defeated <b>${player.kills}</b> monsters.<br>${[armor.bag, ...inv].some(it => it && it.traits.bag && it.traits.voidcore) ? 'You lost your items — but your 🟣 <b>Void Bag</b> and everything in it are safe.' : 'You lost all your items.'} Ready for another go?`;
   document.getElementById('deadScreen').style.display = 'block';
 }
 document.getElementById('respawnBtn').onclick = () => {
   for (const m of monsters) { m.dead = true; scene.remove(m.g); } monsters.length = 0; clearEProjs(); clearBossFx();
+  const pvp = player.pvpBy; player.pvpBy = null;
+  if (!pvp) { // (a friendly-fire death keeps everything — skip the item loss)
   // death = lose everything: inventory, armour and bag — unless the bag is void-bound, which keeps itself and its contents
   const vbs = [armor.bag, ...inv].filter(it => it && it.traits.bag && it.traits.voidcore).sort((p, q) => q.traits.bag - p.traits.bag), vb = vbs[0] || null;
   const kept = vb && armor.bag === vb ? inv.slice(10) : [];
   for (const s of EQUIP_SLOTS) armor[s] = null; inv.fill(null); sel = 0;
   if (vb) { armor.bag = vb; kept.forEach((it, k) => inv[10 + k] = it); }
   renderInv(); if (vb) setTimeout(() => toast(`🟣 Your <b>Void Bag</b> survived — ${kept.filter(Boolean).length} item${kept.filter(Boolean).length === 1 ? '' : 's'} kept`, 3500), 300);
+  } else player.invuln = 2; // brief spawn protection after a player knock-out
   player.slowT = player.dotT = player.rootT = 0;
   if (player.bed) player.pos.set(player.bed.x, player.bed.y, player.bed.z); else player.pos.set(0, getH(0, 0) + 1, 0); player.under = null; player.vy = 0; player.max = player.baseMax; player.hp = player.max; player.phoenixUsed = false; alive = true; spawnTimer = 20;
   document.getElementById('deadScreen').style.display = 'none';
@@ -1972,7 +2003,7 @@ function updateHazards(dt) {
 function underCave(p) { return caveZones.some(Z => !Z.realm && p.y < Z.floor + Z.ht + 1 && Math.hypot(p.x - Z.x, p.z - Z.z) < Z.r + 3); }
 const digLog = []; let H0 = null, hotHint = false, hellPending = false;
 function deformTerrain(x, z, rad, depth, quiet = false) {
-  if (!quiet) digLog.push([+x.toFixed(2), +z.toFixed(2), +rad.toFixed(2), +depth.toFixed(2)]);
+  if (!quiet) { const e = [+x.toFixed(2), +z.toFixed(2), +rad.toFixed(2), +depth.toFixed(2)]; digLog.push(e); if (NET.role) netSend({ t: 'dig', d: e }); }
   const geo = world.terrainGeo; if (!geo) return;
   const pos = geo.attributes.position.array, col = geo.attributes.color.array;
   const j0 = Math.max(0, Math.floor((x - rad + HALF) / STEP)), j1 = Math.min(SEG, Math.ceil((x + rad + HALF) / STEP));
@@ -1992,10 +2023,10 @@ function deformTerrain(x, z, rad, depth, quiet = false) {
   geo.attributes.position.needsUpdate = true; geo.attributes.normal.needsUpdate = true; geo.attributes.color.needsUpdate = true; clearNature(x, z, rad * .9);
   if (quiet) return;
   burst(new V3(x, groundAt(x, z, 999) + .5, z), 0x7a5a3a, 14, 6, .9, 12, 1.3);
-  // dig deep enough below the sea and you fall into the Underworld
-  if (H0 && hellZone && !player.under) { const j = clamp(Math.round((x + HALF) / STEP), 0, SEG), i = clamp(Math.round((z + HALF) / STEP), 0, SEG), dug = H0[i * N + j] - H[i * N + j], h = H[i * N + j];
-    if (h <= WATER - 6 && dug >= 8 && !hellPending) { hellPending = true; toast('🔥 The ground crumbles beneath you…', 1500); sfx(50, 1, 'sawtooth', .08, .5); shake = .6; setTimeout(() => { hellPending = false; enterHell(x, z); }, 500); }
-    else if (!hotHint && h <= WATER - 2 && dug >= 4) { hotHint = true; toast('🔥 The ground is getting <b>hot</b>… something is down there. Keep digging deeper!', 4000); } }
+  // dig a deep pit (anywhere — hills too) and you fall into the Underworld; you must be standing in/at the pit
+  if (H0 && hellZone && !player.under && Math.hypot(player.pos.x - x, player.pos.z - z) < rad + 4) { const j = clamp(Math.round((x + HALF) / STEP), 0, SEG), i = clamp(Math.round((z + HALF) / STEP), 0, SEG), dug = H0[i * N + j] - H[i * N + j], h = H[i * N + j];
+    if ((dug >= 7 || (h <= WATER - 3 && dug >= 4)) && !hellPending) { hellPending = true; toast('🔥 The ground crumbles beneath you…', 1500); sfx(50, 1, 'sawtooth', .08, .5); shake = .6; setTimeout(() => { hellPending = false; enterHell(x, z); }, 500); }
+    else if (!hotHint && dug >= 3) { hotHint = true; toast('🔥 The ground is getting <b>hot</b>… something is down there. Keep digging deeper!', 4000); } }
 }
 
 // ============================================================ monsters
@@ -2883,6 +2914,8 @@ function updateProjs(dt) {
     let hit = null;
     for (const m of monsters) { if (m.dead || p.hitSet.has(m)) continue; if (mCenter(m).distanceTo(p.pos) < m.r + .45 + (m.fly ? .3 : 0) || (!m.fly && Math.hypot(m.x - p.pos.x, m.z - p.pos.z) < m.r + .4 && p.pos.y > m.y && p.pos.y < m.y + 2 * m.sz)) { hit = m; break; } }
     const fxCol = elemColor(p.T) || (p.ammo === 'orb' ? 0xc58cff : p.ammo === 'star' ? 0xfff070 : 0x9a7a5a);
+    if (!hit && NET.ff && !p.back) { let po = null; for (const o of NET.others.values()) if (o.vis && Math.hypot(o.x - p.pos.x, o.z - p.pos.z) < .75 && p.pos.y > o.y && p.pos.y < o.y + 2.1) { po = o; break; }
+      if (po) { netHit(po, p.dmg); burst(p.pos, fxCol, 6, 3, .4, 6); removeProj(i); continue; } }
     if (hit) {
       applyHit(hit, p.dmg, p.T, tmpV.copy(p.v).setY(0).normalize().clone(), { noExplode: true }); p.hitSet.add(hit);
       if (p.T.bomb) { explode(p.pos.clone(), 3 + p.T.bomb, p.dmg * .8, p.T); removeProj(i); continue; }
@@ -2932,6 +2965,8 @@ function attack() {
       if (d > st.reach + m.r || (m.fly ? Math.abs(m.y - player.pos.y - 1) > 2.4 : (player.pos.y + 1 < m.y - 1.5 || player.pos.y > m.y + 1.9 * m.sz))) continue;
       if ((dx * f.x + dz * f.z) / (d || 1) < st.arc && d > 1) continue;
       applyHit(m, st.dmg, st.punch ? {} : T, new V3(dx, 0, dz).normalize(), { melee: true }); }
+    if (NET.ff) for (const o of NET.others.values()) { if (!o.vis) continue; const dx = o.x - player.pos.x, dz = o.z - player.pos.z, d = Math.hypot(dx, dz);
+      if (d > st.reach + .6 || Math.abs(o.y - player.pos.y) > 2.2 || ((dx * f.x + dz * f.z) / (d || 1) < st.arc && d > 1)) continue; netHit(o, st.dmg); }
     if (T.hammer && T.pickaxe) { const gp = player.pos.clone().addScaledVector(f, 2.4); if (!player.under) deformTerrain(gp.x, gp.z, 2.2, 1.4); flash(gp.clone().setY(gp.y + 1), 0xffe0a0, 5, .3);
       for (const m of monsters) if (!m.dead && Math.hypot(m.x - gp.x, m.z - gp.z) < 5) { m.stun = Math.max(m.stun, 1.2); applyHit(m, st.dmg * .5, {}, null, { splash: true }); } }
   }
@@ -3027,6 +3062,7 @@ function resolveCollisions(p, r, h = 1.8) {
 const keys = {};
 let attackHeld = false, jumpHeld = false;
 addEventListener('keydown', e => {
+  if (e.target && e.target.tagName === 'INPUT' && e.target.type !== 'range' && e.target.type !== 'checkbox') { if (e.code === 'Enter' && e.target.id === 'joinCode') document.getElementById('joinBtn').click(); return; } // typing a name / room code
   if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'Tab'].includes(e.code)) e.preventDefault();
   if ((e.code === 'Tab' || e.code === 'KeyI') && locked()) document.exitPointerLock();
   if (keys[e.code]) return; keys[e.code] = true;
@@ -3152,6 +3188,7 @@ const pauseEl = document.getElementById('pauseScreen');
 function pauseGame() {
   if (state !== 'play' || !alive) return; state = 'paused'; releaseAll();
   if (locked()) document.exitPointerLock();
+  pauseEl.querySelector('.panel').appendChild(document.getElementById('mpBox')); // host / join from the pause menu too
   pauseEl.style.display = 'block';
 }
 function resumeGame() {
@@ -3226,7 +3263,7 @@ function onNewDay() {
 const ser = it => it ? { t: it.traits, p: it.power, r: it.tier } : null;
 const deser = o => o && o.t ? makeItem(o.t, o.p, o.r) : null;
 let baseChestCount = 0;
-function saveGame() { if (!player.bed) return false;
+function saveGame() { if (!player.bed || NET.role === 'guest' || JOIN) return false; // a friend's world isn't saved over your own
   try { localStorage.setItem(SAVE_KEY, JSON.stringify({ v: 1, seed: WORLD_SEED, day: dayNum, tod, coins, kills: player.kills, merges: mergesDone, baseMax: player.baseMax, bed: player.bed,
     inv: inv.map(ser), armor: Object.fromEntries(EQUIP_SLOTS.map(k => [k, ser(armor[k])])), sel, disc: [...discovered], book: bookOwned, digs: digLog,
     opened: chests.slice(0, baseChestCount).map((c, i) => c.open ? i : -1).filter(i => i >= 0), lairs: lairs.map(L => [L.defeated ? 1 : 0, L.lvl]),
@@ -3248,11 +3285,11 @@ function applySave(S) {
 function sleepInBed(b) {
   player.bed = { x: b.spawn.x, y: b.spawn.y, z: b.spawn.z };
   let slept = false;
-  if (isNight) { // sleep through the night: wake up at sunrise of the next day
+  if (isNight && NET.role !== 'guest') { // sleep through the night: wake up at sunrise of the next day (in multiplayer only the host can skip the night)
     tod = .02; dayNum++; onNewDay(); sunrise(); updateSky.wasNight = false; slept = true; }
   player.hp = player.max;
   const ok = saveGame();
-  toast(`🛏️ ${slept ? `You slept through the night — <b>Day ${dayNum}</b>.<br>` : ''}${ok ? '<b style="color:#8fff9a">Game saved!</b> You can close the game and Continue later.<br>You will wake up here after dying.' : 'Could not save (storage blocked)'}`, 4500);
+  toast(`🛏️ ${slept ? `You slept through the night — <b>Day ${dayNum}</b>.<br>` : ''}${ok ? '<b style="color:#8fff9a">Game saved!</b> You can close the game and Continue later.<br>You will wake up here after dying.' : (NET.role === 'guest' || JOIN) ? 'You will wake up here after dying.<br><small>(Only the host\'s game is saved in multiplayer.)</small>' : 'Could not save (storage blocked)'}`, 4500);
   [392, 494, 587].forEach((f, k) => setTimeout(() => sfx(f, .3, 'sine', .05, 1), k * 140));
 }
 let nearBed = null;
@@ -3288,6 +3325,7 @@ function drawMinimap() {
   for (const b of biomes) if (b.lavaY !== undefined) dot(b.x, b.z, '#ff5a10', 10);
   for (const ch of chests) if (!ch.open && (!ch.cave || player.under === ch.cave)) dot(ch.x, ch.z, ch.theme ? '#ff9a40' : '#ffd040', 5);
   for (const l of loot) dot(l.x, l.z, '#ffffff', 3);
+  for (const o of NET.others.values()) if (o.vis) dot(o.x, o.z, '#4fc3ff', 8);
   for (const L of lairs) if (!L.defeated && (!L.zone || player.under === L.zone)) { mctx.fillStyle = '#' + new THREE.Color(L.B.glow).getHexString(); mctx.beginPath(); mctx.arc(L.x - P.x, L.z - P.z, 5, 0, 7); mctx.fill(); mctx.lineWidth = 1.5; mctx.strokeStyle = '#200'; mctx.stroke(); }
   for (const m of monsters) dot(m.x, m.z, m.boss ? '#ff2020' : m.d.king ? '#ffd84a' : '#ff4050', m.boss ? 10 : m.d.king ? 8 : 4);
   for (const c of coinDrops) dot(c.m.position.x, c.m.position.z, '#ffe066', 2);
@@ -3295,6 +3333,160 @@ function drawMinimap() {
   const fx = Math.sin(player.yaw), fz = Math.cos(player.yaw), sx = fx * Math.cos(camYaw) - fz * Math.sin(camYaw), sy = fx * Math.sin(camYaw) + fz * Math.cos(camYaw), ang = Math.atan2(sy, sx);
   mctx.save(); mctx.translate(c, c); mctx.rotate(ang); mctx.fillStyle = '#4af'; mctx.strokeStyle = '#fff'; mctx.lineWidth = 1.5;
   mctx.beginPath(); mctx.moveTo(7, 0); mctx.lineTo(-5, -5); mctx.lineTo(-3, 0); mctx.lineTo(-5, 5); mctx.closePath(); mctx.fill(); mctx.stroke(); mctx.restore();
+}
+
+// ============================================================ multiplayer (PeerJS): one player hosts, friends join with a 5-letter room code.
+// The host is the hub: guests talk to the host, the host passes messages on. Everyone shares the same world (seed + dug holes),
+// the time of day, and sees each other; monsters, chests and loot stay your own.
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const PID = c => 'mergequest-v1-' + c, mpEl = id => document.getElementById(id);
+const myName = () => (mpEl('mpName').value.trim().replace(/\s+/g, ' ') || 'Player').slice(0, 14);
+try { const n = localStorage.getItem('mq-name'); if (n) mpEl('mpName').value = n; } catch (e) { }
+mpEl('mpName').addEventListener('change', () => { try { localStorage.setItem('mq-name', myName()); } catch (e) { } });
+const num = (v, lo, hi) => { v = +v; return Number.isFinite(v) ? clamp(v, lo, hi) : lo; };
+function mpStatus(h) { mpEl('mpStatus').innerHTML = h; }
+function netSend(msg, except) { // guests → host; host → every guest (except the one it came from)
+  try { if (NET.role === 'guest') { if (NET.host && NET.host.open) NET.host.send(msg); }
+    else if (NET.role === 'host') for (const c of NET.conns.values()) if (c !== except && c.open) c.send(msg); } catch (e) { } }
+function netTo(id, msg) { if (NET.role === 'host') { const c = NET.conns.get(id); try { if (c && c.open) c.send(msg); } catch (e) { } } else netSend(msg); }
+function updateMpHud() {
+  const n = NET.others.size + 1;
+  mpEl('mpHud').innerHTML = NET.role ? `👥 Room <b>${NET.code}</b> · ${n} player${n === 1 ? '' : 's'}${NET.ff ? ' · ⚔️ FF' : ''}` : '';
+  const on = !!NET.role; mpEl('mpCtl').style.display = on ? 'none' : ''; mpEl('ffRow').style.display = on && NET.role !== 'host' ? 'none' : '';
+}
+function mpLobby() { // what the multiplayer box says once you're in a room
+  const names = [...NET.others.values()].map(o => esc(o.name)).join(', ');
+  mpStatus(NET.role === 'host'
+    ? `Room code: <b class="code">${NET.code}</b><br>Friends type this code and tap 🔗 Join.${names ? `<br>In your world: <b>${names}</b>` : ''}<br><button class="sec" type="button" onclick="leaveGame()">✖ Close room</button>`
+    : `✅ In room <b class="code">${NET.code}</b>${NET.ff ? ' · ⚔️ friendly fire ON' : ''}${names ? `<br>Players: <b>${names}</b>` : ''}<br><button class="sec" type="button" onclick="leaveGame()">✖ Leave (back to your own world)</button>`);
+  updateMpHud();
+}
+function hostGame() {
+  if (NET.role || NET.peer) return;
+  if (!window.Peer) return mpStatus('⚠️ Multiplayer needs an internet connection — reload the game when you\'re online.');
+  if (JOIN) return mpStatus('Leave the room first to host your own game.');
+  const code = Array.from({ length: 5 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random() * 32)]).join('');
+  mpStatus('Creating a room…'); try { localStorage.setItem('mq-name', myName()); } catch (e) { }
+  const peer = new Peer(PID(code)); NET.peer = peer;
+  peer.on('open', () => { NET.role = 'host'; NET.id = 'host'; NET.code = code; NET.ff = mpEl('ffChk').checked; mpLobby(); });
+  peer.on('connection', c => {
+    c.on('open', () => { if (NET.conns.size >= 7) { c.send({ t: 'full' }); setTimeout(() => c.close(), 300); return; }
+      NET.conns.set(c.peer, c); c.send({ t: 'welcome', seed: WORLD_SEED, ff: NET.ff, tod, day: dayNum, digs: digLog }); });
+    c.on('data', d => netData(d, c)); c.on('close', () => dropConn(c)); c.on('error', () => dropConn(c)); });
+  peer.on('disconnected', () => { try { peer.reconnect(); } catch (e) { } }); // lost the matchmaking server: existing friends stay connected
+  peer.on('error', e => { if (e.type === 'unavailable-id' && !NET.role) { peer.destroy(); NET.peer = null; hostGame(); return; }
+    if (!NET.role) { peer.destroy(); NET.peer = null; mpStatus('⚠️ Could not create a room (' + esc(e.type || 'error') + '). Check your internet and try again.'); } });
+}
+function dropConn(c) { if (!NET.conns.has(c.peer)) return; NET.conns.delete(c.peer); netData({ t: 'bye', id: c.peer }, null); netSend({ t: 'bye', id: c.peer }); }
+function joinGame(raw, auto) {
+  const code = String(raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (NET.role || NET.peer) return;
+  if (code.length !== 5) return mpStatus('Type the 5-letter room code your friend sees.');
+  if (!window.Peer) return mpStatus('⚠️ Multiplayer needs an internet connection — reload the game when you\'re online.' + (auto ? soloBtn() : ''));
+  try { localStorage.setItem('mq-name', myName()); } catch (e) { }
+  mpStatus(`Connecting to room <b>${code}</b>…`);
+  const peer = new Peer(); NET.peer = peer; let to = 0;
+  const fail = msg => { clearTimeout(to); if (NET.role) return; try { peer.destroy(); } catch (e) { } NET.peer = null; NET.host = null; mpStatus('⚠️ ' + msg + (auto ? soloBtn() : '')); };
+  peer.on('open', id => {
+    const c = peer.connect(PID(code), { reliable: true }); NET.host = c;
+    to = setTimeout(() => fail(`No game found with code <b>${code}</b>.`), 15000);
+    c.on('data', d => {
+      if (d && d.t === 'full') return fail('That room is full (8 players max).');
+      if (d && d.t === 'welcome') { clearTimeout(to);
+        if (d.seed !== WORLD_SEED) { // load the host's world: same seed = same map
+          mpStatus('Loading your friend\'s world…'); sessionStorage.setItem('mq-join', JSON.stringify({ code, seed: d.seed, name: myName() })); location.reload(); return; }
+        NET.role = 'guest'; NET.id = id; NET.code = code; NET.ff = !!d.ff; tod = num(d.tod, 0, .999); dayNum = Math.round(num(d.day, 1, 1e6));
+        for (const g of (Array.isArray(d.digs) ? d.digs : []).slice(0, 5000)) netDig(g);
+        mpLobby(); if (state === 'play') toast(`👥 Joined room <b>${code}</b>`, 2500); return; }
+      netData(d, c); });
+    c.on('close', () => { if (NET.role !== 'guest') return fail('Could not connect.'); NET.role = null; for (const id of [...NET.others.keys()]) removeOther(id);
+      try { peer.destroy(); } catch (e) { } NET.peer = NET.host = null; updateMpHud();
+      toast('👥 The host closed the game — you can keep playing here alone.', 4500); mpStatus('The host left.' + soloBtn()); });
+  });
+  peer.on('error', e => fail(e.type === 'peer-unavailable' ? `No game found with code <b>${code}</b>. Check the code — the host must have the game open.` : `Could not connect (${esc(e.type || 'error')}). Check your internet.`));
+}
+const soloBtn = () => `<br><button class="sec" type="button" onclick="leaveGame()">▶ Back to my own world</button>`;
+function leaveGame() {
+  const wasGuest = NET.role === 'guest' || JOIN;
+  netSend({ t: 'bye', id: NET.id }); try { if (NET.peer) NET.peer.destroy(); } catch (e) { }
+  NET.peer = NET.host = null; NET.role = null; NET.conns.clear(); for (const id of [...NET.others.keys()]) removeOther(id);
+  if (wasGuest) { sessionStorage.removeItem('mq-join'); location.reload(); return; }
+  mpStatus(''); updateMpHud();
+}
+mpEl('hostBtn').onclick = hostGame;
+mpEl('joinBtn').onclick = () => joinGame(mpEl('joinCode').value);
+mpEl('ffChk').onchange = () => { if (NET.role !== 'host') return; NET.ff = mpEl('ffChk').checked; netSend({ t: 'ff', v: NET.ff }); mpLobby();
+  toast(NET.ff ? '⚔️ Friendly fire ON — a player knock-out keeps your loot' : '🤝 Friendly fire OFF', 2500); };
+function netDig(g) { if (!Array.isArray(g) || g.length < 4) return; const e = [num(g[0], -HALF, HALF), num(g[1], -HALF, HALF), num(g[2], .5, 9), num(g[3], .1, 8)];
+  deformTerrain(e[0], e[1], e[2], e[3], true); digLog.push(e); }
+// ---- other players: a body like yours (different colour) with a name tag + health bar
+const NET_COLS = [0xd94848, 0x3bb85a, 0xe0a020, 0x9050d0, 0x20b0c0, 0xe060a0, 0x707070, 0xf07030];
+function safeItem(h) { try { const o = typeof h === 'string' ? JSON.parse(h) : null; if (!o || !o.t || typeof o.t !== 'object') return null; const t = {};
+  for (const k in o.t) if (BASE[k] && Number.isFinite(+o.t[k]) && +o.t[k] > 0) t[k] = Math.min(30, +o.t[k]); return Object.keys(t).length ? makeItem(t, num(o.p, 0, 1e4), Math.round(num(o.r, 0, 12))) : null; } catch (e) { return null; } }
+function drawTag(o) { const c = o.tagC, x = c.getContext('2d'); x.clearRect(0, 0, 256, 72);
+  x.font = '800 30px Segoe UI, system-ui, sans-serif'; x.textAlign = 'center'; x.lineWidth = 6; x.strokeStyle = 'rgba(0,0,0,.75)'; x.strokeText(o.name, 128, 32); x.fillStyle = '#fff'; x.fillText(o.name, 128, 32);
+  x.fillStyle = 'rgba(0,0,0,.6)'; x.fillRect(48, 46, 160, 14); x.fillStyle = o.hp / o.mx > .35 ? '#5fe070' : '#ff5050'; x.fillRect(50, 48, 156 * clamp(o.hp / o.mx, 0, 1), 10); o.tagTex.needsUpdate = true; }
+function netState(d) {
+  const id = String(d.id).slice(0, 64); let o = NET.others.get(id);
+  if (!o) { if (NET.others.size >= 8) return; let hsh = 0; for (const ch of id) hsh = (hsh * 31 + ch.charCodeAt(0)) | 0;
+    const a = buildPlayer(NET_COLS[Math.abs(hsh) % NET_COLS.length], [0x7b4a22, 0x222222, 0xe8c060, 0xa04020][Math.abs(hsh >> 3) % 4]);
+    const tagC = document.createElement('canvas'); tagC.width = 256; tagC.height = 72; const tagTex = new THREE.CanvasTexture(tagC);
+    const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: tagTex, transparent: true, depthWrite: false })); tag.scale.set(2.4, .68, 1); tag.position.y = 2.75; a.g.add(tag);
+    o = { id, name: 'Player', a, tagC, tagTex, x: num(d.x, -HALF, HALF), y: num(d.y, -400, 400), z: num(d.z, -HALF, HALF), tx: 0, ty: 0, tz: 0, yaw: 0, hp: 100, mx: 100, u: -1, alive: true, vis: false, held: null, hs: '', walk: 0, seen: 0, tagKey: '' };
+    NET.others.set(id, o); setTimeout(() => { if (NET.others.has(id)) { toast(`👥 <b>${esc(o.name)}</b> joined`, 2500); if (NET.role) mpLobby(); } }, 50); }
+  o.name = String(d.n || 'Player').slice(0, 14); o.tx = num(d.x, -HALF, HALF); o.ty = num(d.y, -400, 400); o.tz = num(d.z, -HALF, HALF); o.yaw = num(d.yaw, -10, 10);
+  o.hp = num(d.hp, 0, 1e5); o.mx = num(d.mx, 1, 1e5); o.u = Math.round(num(d.u, -1, 99)); o.alive = !!d.a; o.sw = !!d.s; o.seen = performance.now();
+  if (typeof d.h === 'string' && d.h.length < 2000 && d.h !== o.hs) { o.hs = d.h; if (o.held) o.a.hand.remove(o.held); const it = safeItem(d.h);
+    o.held = it ? buildItemModel(it) : null; if (o.held) { o.held.scale.setScalar(.6); o.a.hand.add(o.held); } }
+  const key = o.name + '|' + Math.round(o.hp / o.mx * 40); if (key !== o.tagKey) { o.tagKey = key; drawTag(o); }
+}
+function removeOther(id) { const o = NET.others.get(id); if (!o) return; scene.remove(o.a.g); NET.others.delete(id); toast(`👥 <b>${esc(o.name)}</b> left`, 2200); if (NET.role) mpLobby(); }
+function netHit(o, dmg) { // friendly fire: tell that player they got hit (their game applies it, with their own armour)
+  if (player.pvpCd > 0) return; player.pvpCd = .15; netTo(o.id, { t: 'hit', to: o.id, from: NET.id, n: myName(), dmg: Math.round(dmg) });
+  dmgText(new V3(o.x, o.y + 2.2, o.z), '-' + Math.round(Math.min(dmg * .6, 45)), '#ffb0b0', 20); burst(new V3(o.x, o.y + 1.2, o.z), 0xff7070, 6, 3, .3, 4); }
+function netHurt(d) {
+  if (!NET.ff || !alive) return;
+  const dmg = Math.min(num(d.dmg, 0, 1e5) * .6, 45); // toned down: strong gear can't one-shot a friend
+  NET.pvp = { n: String(d.n || 'Player').slice(0, 14), id: String(d.from || '') }; hurtPlayer(dmg, null); NET.pvp = null;
+}
+function netData(d, c) {
+  if (!d || typeof d !== 'object' || typeof d.t !== 'string') return;
+  if (NET.role === 'host' && c) { // the host checks who it's from, then passes it on
+    if (d.t !== 'welcome' && d.t !== 'tod' && d.t !== 'ff') d.id = d.t === 'hit' ? d.id : c.peer;
+    if (d.t === 'hit') { d.from = c.peer; if (d.to !== NET.id) { netTo(d.to, d); return; } }
+    else if (d.t === 'st' || d.t === 'dig' || d.t === 'kill') netSend(d, c);
+    else if (d.t !== 'bye') return; }
+  switch (d.t) {
+    case 'st': if (d.id !== NET.id) netState(d); break;
+    case 'dig': netDig(d.d); break;
+    case 'hit': if (d.to === NET.id) netHurt(d); break;
+    case 'kill': if (d.byId === NET.id) { toast(`⚔️ You knocked out <b>${esc(String(d.n).slice(0, 14))}</b>! (they keep their loot)`, 3000); } else toast(`⚔️ <b>${esc(String(d.by).slice(0, 14))}</b> knocked out <b>${esc(String(d.n).slice(0, 14))}</b>`, 3000); break;
+    case 'bye': if (d.id === 'host' && NET.role === 'guest') break; removeOther(String(d.id)); break;
+    case 'tod': if (NET.role === 'guest') { tod = num(d.tod, 0, .999); const dd = Math.round(num(d.day, 1, 1e6)); if (dd !== dayNum) { dayNum = dd; onNewDay(); } } break;
+    case 'ff': if (NET.role === 'guest') { NET.ff = !!d.v; toast(NET.ff ? '⚔️ The host turned friendly fire <b>ON</b> — a player knock-out keeps your loot' : '🤝 The host turned friendly fire <b>OFF</b>', 3000); mpLobby(); } break;
+  }
+}
+let netHiddenT = performance.now(); // browsers pause the game loop in a hidden tab / when the phone switches apps: keep talking so friends don't see you "leave"
+setInterval(() => { if (!document.hidden) return; const n = performance.now(); netTick(Math.min(.5, (n - netHiddenT) / 1000)); netHiddenT = n; }, 250);
+document.addEventListener('visibilitychange', () => { netHiddenT = performance.now(); });
+function netTick(dt) {
+  if (!NET.role) return;
+  player.pvpCd = (player.pvpCd || 0) - dt;
+  NET.sendT -= dt;
+  if (NET.sendT <= 0 && state !== 'menu') { NET.sendT = 1 / 12; const P = player.pos;
+    netSend({ t: 'st', id: NET.id, n: myName(), x: +P.x.toFixed(2), y: +P.y.toFixed(2), z: +P.z.toFixed(2), yaw: +player.yaw.toFixed(2), hp: Math.round(player.hp), mx: player.max,
+      u: caveZones.indexOf(player.under), a: alive ? 1 : 0, s: player.swingT > 0 || player.aimT > 0 ? 1 : 0, h: JSON.stringify(ser(inv[sel])) }); }
+  if (NET.role === 'host') { NET.todT -= dt; if (NET.todT <= 0) { NET.todT = 2; netSend({ t: 'tod', tod, day: dayNum }); } }
+  const me = caveZones.indexOf(player.under), now = performance.now(), k = Math.min(1, dt * 12);
+  for (const o of [...NET.others.values()]) {
+    if (now - o.seen > 10000) { removeOther(o.id); continue; } // lost connection
+    const far = Math.hypot(o.tx - o.x, o.tz - o.z) > 15 || Math.abs(o.ty - o.y) > 15, ox = o.x, oz = o.z;
+    o.x = far ? o.tx : lerp(o.x, o.tx, k); o.y = far ? o.ty : lerp(o.y, o.ty, k); o.z = far ? o.tz : lerp(o.z, o.tz, k);
+    o.vis = o.alive && o.u === me && state !== 'menu'; o.a.g.visible = o.vis; if (!o.vis) continue;
+    const g = o.a.g; g.position.set(o.x, o.y, o.z); let dy = o.yaw - g.rotation.y; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); g.rotation.y += dy * k;
+    const sp = Math.hypot(o.x - ox, o.z - oz) / Math.max(dt, 1e-3); o.walk += Math.min(sp, 12) * dt * 1.4; const sw = Math.sin(o.walk) * .7 * Math.min(1, sp / 3);
+    o.a.legs[0].rotation.x = sw; o.a.legs[1].rotation.x = -sw; o.a.arms[0].rotation.x = -sw * .8;
+    o.a.arms[1].rotation.x = lerp(o.a.arms[1].rotation.x, o.sw ? -1.6 : sw * .8, Math.min(1, dt * 16)); }
 }
 
 // ============================================================ main update
@@ -3462,6 +3654,7 @@ function loop(now) {
   updateRotateHint(); updateMusic();
   if (state === 'play') update(dt);
   else if (state === 'menu') { camYaw += dt * .1; updateSky(0); playTime += dt; }
+  netTick(dt);
   updateCamera(state === 'menu' ? 1 : dt);
   renderer.clear();
   renderer.render(scene, camera);
@@ -3486,11 +3679,13 @@ function generate() {
   baseChestCount = chests.length; H0 = H.slice(); if (SAVE) { try { applySave(SAVE); } catch (e) { console.error('save load failed', e); } }
   buildMapImg(); renderInv(); drawMinimap();
   const b = document.getElementById('playBtn'); b.disabled = false; b.textContent = SAVE ? `▶ Continue — Day ${SAVE.day}` : '▶ Play'; if (SAVE) document.getElementById('newWorldBtn').style.display = '';
+  if (JOIN) { b.textContent = '▶ Play with friends'; document.getElementById('mpName').value = JOIN.name || ''; joinGame(JOIN.code, true); }
 }
 document.getElementById('playBtn').onclick = () => {
   try { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); mrand.s = 1 + Math.floor(Math.random() * 1e6); newSection(); initMusic(); } catch (e) { }
   document.getElementById('startScreen').style.display = 'none'; state = 'play'; camYaw = Math.PI; camPitch = 0; last = performance.now();
   if (!isTouch) tryLock();
+  if (NET.role) toast(`👥 Playing online in room <b>${NET.code}</b>${NET.ff ? ' · ⚔️ friendly fire ON' : ''}`, 4000); else
   toast(SAVE ? '🛏️ Welcome back! Your saved game continues.' : 'Grab the 🏹 and 🗡️, then drag one onto the other!<br>🛏️ Sleep in a bed inside a house to save.', 4000);
 };
 applySettings();
