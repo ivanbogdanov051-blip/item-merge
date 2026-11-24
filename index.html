@@ -100,6 +100,8 @@
   #bossbar .bf { height: 100%; width: 100%; background: linear-gradient(90deg,#a01020,#ff4030,#ff9040); transition: width .12s; }
   #bossbar.rage .bf { background: linear-gradient(90deg,#ff1030,#ff60a0,#ff1030); }
   #bossbar .ba { font-size: 12px; color: #ffe0a0; margin-top: 2px; min-height: 15px; text-shadow: 0 1px 3px #000; }
+  #fightBtn { position: fixed; left: 50%; bottom: 120px; transform: translateX(-50%); z-index: 7; display: none; font: 800 17px "Segoe UI", system-ui, sans-serif; color: #fff; padding: 12px 26px; border-radius: 26px; border: 2px solid #ffd060; background: linear-gradient(90deg,#a01828,#ff5030); box-shadow: 0 0 18px #ff302099, 0 6px 16px #0008; cursor: pointer; touch-action: manipulation; white-space: nowrap; }
+  #fightBtn small { display: block; font-size: 11px; font-weight: 600; opacity: .85; }
   .ctl-more { margin-bottom: 18px; } .ctl-more summary { cursor: pointer; opacity: .75; font-size: 14px; margin-bottom: 8px; } .ctl-more .ctl { margin-bottom: 0; }
   /* phones & small windows: compact HUD so more of the world is visible */
   @media (max-width: 640px), (max-height: 520px) {
@@ -140,6 +142,7 @@
 <div id="joy"><div id="knob"></div></div>
 <div id="btns"><div class="btn" id="bAtk">⚔️</div><div class="btn" id="bJump">⤒</div><div class="btn" id="bDash">🚀</div><div class="btn" id="bAbil">✨</div></div>
 <div id="abil"></div>
+<button id="fightBtn" type="button"></button>
 <div id="bossbar"><div class="bn"></div><div class="bb"><div class="bf"></div></div><div class="ba"></div></div>
 <div id="help">WASD move · Click attack · Esc → drag to merge</div>
 
@@ -1811,7 +1814,8 @@ const part = (geo, m, parent, x, y, z, sh = true) => mesh(geo, m, null, parent, 
 function eyes(parent, y, z, sx = .13, r = .085, iris = 0xd8a020, glow = false) {
   for (const s of [-1, 1]) { part(gS(r, 12, 10), M(0xe8e0c0, { tex: 'none', roughness: .15 }), parent, s * sx, y, z, false);
     part(gS(r * .62, 10, 8), glow ? glowM(iris, 1.6) : M(iris, { tex: 'none', roughness: .1 }), parent, s * sx, y, z + r * .5, false);
-    part(gS(r * .3, 8, 6), M(0x050505, { tex: 'none', roughness: .05 }), parent, s * sx, y, z + r * .8, false); }
+    part(gS(r * .3, 8, 6), M(0x050505, { tex: 'none', roughness: .05 }), parent, s * sx, y, z + r * .8, false);
+    if (!glow) part(gS(r * .14, 6, 5), M(0xffffff, { tex: 'none', emissive: 0xffffff, emissiveIntensity: .6 }), parent, s * sx + r * .2, y + r * .25, z + r * .95, false); }
 }
 // a muscled humanoid: torso, head with brow, nose, mouth and teeth, limbs with hands and claws
 function humanoid(inner, o) {
@@ -1821,12 +1825,16 @@ function humanoid(inner, o) {
   if (o.cloth !== undefined) { part(gC(.37, .45, .34, 12), M(o.cloth, { tex: 'bark', bumpScale: .02 }), inner, 0, .6, 0); part(gC(.44, .44, .07, 12), M(0x3a2814, { tex: 'none', roughness: .5 }), inner, 0, .76, 0); }
   part(gC(.13, .16, .2), hd, inner, 0, 1.36, 0);
   const head = part(gS(.34), hd, inner, 0, 1.62, 0); head.scale.set(1, 1.06, .98);
-  if (o.face !== false) {
-    part(gB(.48, .07, .15), hd, inner, 0, 1.71, .26).rotation.x = .25;                            // brow ridge
-    const ns = part(gK(.065, .24, 8), hd, inner, 0, 1.6, .37); ns.rotation.x = Math.PI / 2 + .3;   // nose
-    part(gB(.22, .035, .04), M(0x1a0a0a, { tex: 'none' }), inner, 0, 1.47, .31);                   // mouth
-    for (const s of [-1, 1]) { const t = part(gK(.025, .08, 5), M(0xf0e8d0, { tex: 'none', roughness: .3 }), inner, s * .07, 1.5, .31, false); if (o.tusks) { t.scale.set(1.6, 2.4, 1.6); t.position.y = 1.53; } }
-    eyes(inner, 1.66, .27, .13, .075, o.iris || 0xd8a020, o.glowEyes);
+  if (o.face !== false && o.glowEyes) { // bosses: stern face with glowing eyes
+    part(gB(.48, .07, .15), hd, inner, 0, 1.71, .26).rotation.x = .25;
+    part(gB(.22, .035, .04), M(0x1a0a0a, { tex: 'none' }), inner, 0, 1.47, .31);
+    eyes(inner, 1.66, .27, .13, .075, o.iris || 0xd8a020, true);
+  } else if (o.face !== false) { // regular monsters: friendly cartoon face
+    part(gS(.06, 10, 8), hd, inner, 0, 1.57, .35).scale.set(1, .85, 1);                           // button nose
+    const sm = part(new THREE.TorusGeometry(.08, .016, 6, 12, Math.PI), M(0x3a1a1a, { tex: 'none' }), inner, 0, 1.49, .3, false); sm.rotation.z = Math.PI; // smile
+    for (const s of [-1, 1]) part(gS(.055, 8, 6), M(0xff9aa8, { tex: 'none', roughness: .6 }), inner, s * .21, 1.53, .27, false).scale.z = .4; // rosy cheeks
+    if (o.tusks) for (const s of [-1, 1]) part(gK(.025, .07, 5), M(0xf4efe0, { tex: 'none', roughness: .3 }), inner, s * .06, 1.47, .33, false);
+    eyes(inner, 1.66, .26, .13, .1, o.iris || 0x4a3020, false);
   }
   for (const s of [-1, 1]) {
     const lp = new THREE.Group(); lp.position.set(s * .18, .52, 0); inner.add(lp);
@@ -1850,7 +1858,7 @@ function quadruped(inner, c, opts = {}) {
   part(gS(.13), dk, head, 0, -.15, .26).scale.set(.85, .4, 1.5);                          // lower jaw
   for (const s of [-1, 1]) { part(gK(.018, .085, 5), M(0xf0e8d0, { tex: 'none' }), head, s * .06, -.1, .46, false).rotation.x = Math.PI;
     const ear = part(gK(.075, .24, 6), dk, head, s * .15, .26, -.08); ear.rotation.z = -s * .3; ear.rotation.x = -.25; }
-  eyes(head, .08, .2, .14, .042, opts.iris || 0xffb020, true);
+  eyes(head, .08, .2, .14, opts.iris ? .042 : .065, opts.iris || 0x4a3020, !!opts.iris);
   const tail = part(gC(.09, .03, .9, 8), sk, inner, 0, 1.15, -.95); tail.rotation.x = -1.1;
   for (const [sx, sz] of [[-1, 1], [1, 1], [-1, -1], [1, -1]]) { const lp = new THREE.Group(); lp.position.set(sx * .24, .85, sz * .52 - .05); inner.add(lp);
     part(gC(.1, .065, .8, 8), sk, lp, 0, -.36, 0); part(gS(.085, 8, 6), dk, lp, 0, -.78, .03); legs.push(lp); }
@@ -1859,26 +1867,25 @@ function quadruped(inner, c, opts = {}) {
 function buildMonsterMesh(type) {
   const g = new THREE.Group(), inner = new THREE.Group(); g.add(inner); let legs = [], arms = [], wings = [];
   if (type === 'bat') { // leathery wings with finger bones, big ears, glowing eyes
-    const fur = M(0x3a2a24), mem = M(0x2a1c1a, { side: THREE.DoubleSide, roughness: .6 });
+    const batC = pick([0x8a6a5a, 0x6fb6c8, 0xd890b8]), fur = M(batC), mem = M(new THREE.Color(batC).multiplyScalar(.75).getHex(), { side: THREE.DoubleSide, roughness: .6 });
     part(gS(.38), fur, inner, 0, 0, 0).scale.set(1, 1.1, 1);
     part(gS(.26), fur, inner, 0, .32, .22);
     for (const s of [-1, 1]) { const e = part(gK(.1, .34, 6), fur, inner, s * .14, .6, .18); e.rotation.z = -s * .3; }
     part(gK(.07, .14, 6), M(0x4a3430), inner, 0, .28, .48).rotation.x = Math.PI / 2;
-    eyes(inner, .38, .4, .1, .05, 0xff2020, true);
+    eyes(inner, .38, .4, .1, .075, 0x3a2a20, false);
     for (const s of [-1, 1]) { const wp = new THREE.Group(); wp.position.set(s * .3, .1, 0); inner.add(wp);
       const w = part(gB(1.1, .02, .7), mem, wp, s * .58, 0, -.05); w.scale.z = .9;
       for (let f = 0; f < 3; f++) { const b = part(gC(.02, .012, 1.1, 5), fur, wp, s * .55, .01, -.3 + f * .28); b.rotation.z = Math.PI / 2; b.rotation.y = s * (f - 1) * .25; }
       wings.push(wp); }
     return { g, inner, legs, arms, wings };
   }
-  if (type === 'wolf') { const q = quadruped(inner, pick([0x5a5650, 0x4a4038, 0x6e6a64])); return { g, inner, legs: q.legs, arms, wings }; }
+  if (type === 'wolf') { const q = quadruped(inner, pick([0x9a948c, 0xb08a60, 0x8a8a96])); return { g, inner, legs: q.legs, arms, wings }; }
   if (type === 'spider') {
-    const ch = M(0x2a221e), red = glowM(0xc01010, .6);
+    const ch = M(0x6a4a3a), red = M(0xffb040, { tex: 'none', roughness: .5 });
     part(gS(.62), ch, inner, 0, .8, -.65).scale.set(1, .82, 1.2);
     part(gS(.2), red, inner, 0, 1.25, -.65).scale.set(1, .3, 1.4);
     part(gS(.36), ch, inner, 0, .65, .15).scale.set(1, .8, 1.1);
-    for (let k = 0; k < 6; k++) part(gS(.05, 8, 6), glowM(0xff2020, 1.4), inner, (k % 3 - 1) * .1, .78 + Math.floor(k / 3) * .07, .46, false);
-    for (const s of [-1, 1]) { const f = part(gK(.04, .2, 6), M(0x111111, { tex: 'none' }), inner, s * .07, .5, .44); f.rotation.x = Math.PI * .9; }
+    eyes(inner, .78, .42, .12, .09, 0x3a2a20, false);
     for (let k = 0; k < 8; k++) { const s = k % 2 ? 1 : -1, row = Math.floor(k / 2), lp = new THREE.Group(); lp.position.set(s * .25, .7, .35 - row * .25); lp.rotation.y = s * (row - 1.5) * .35; inner.add(lp);
       const up = part(gC(.045, .035, .85, 6), ch, lp, s * .33, .22, 0); up.rotation.z = s * -1.05;
       const lo = part(gC(.035, .015, 1, 6), ch, lp, s * .78, -.2, 0); lo.rotation.z = s * .35; legs.push(lp); }
@@ -1888,7 +1895,7 @@ function buildMonsterMesh(type) {
     const bone = M(0xd8d0b8, { tex: 'rock', bumpScale: .02, roughness: .6 });
     part(gS(.3), bone, inner, 0, 1.64, 0).scale.set(1, 1.08, 1.05);
     part(gB(.26, .1, .18), bone, inner, 0, 1.43, .08);
-    for (const s of [-1, 1]) { part(gS(.08, 8, 6), M(0x050505, { tex: 'none' }), inner, s * .11, 1.68, .24, false); part(gS(.03, 6, 5), glowM(0xff3020, 2), inner, s * .11, 1.68, .3, false); }
+    eyes(inner, 1.68, .24, .11, .085, 0x2a2a3a, false);
     part(gC(.05, .05, .85, 6), bone, inner, 0, 1, -.05);
     for (let k = 0; k < 4; k++) { const rb = part(new THREE.TorusGeometry(.24 - k * .02, .025, 5, 14, Math.PI * 1.4), bone, inner, 0, 1.28 - k * .12, 0); rb.rotation.x = Math.PI / 2; rb.rotation.z = -Math.PI * .2; }
     part(gB(.38, .13, .2), bone, inner, 0, .6, 0);
@@ -1907,11 +1914,11 @@ function buildMonsterMesh(type) {
     return { g, inner, legs, arms, wings };
   }
   if (type === 'golem') {
-    const rk = M(0x6e6a64, { tex: 'rock', bumpScale: .06, roughness: .9 }), moss = M(0x4a6a2a, { tex: 'bark' }), lava = glowM(0xff6a10, 1.5);
+    const rk = M(0x9a948a, { tex: 'rock', bumpScale: .06, roughness: .9 }), moss = M(0x5a9a3a, { tex: 'bark' });
     part(gL(.62, .12, 1), rk, inner, 0, 1.3, 0).scale.set(1.15, 1.15, .9);
     part(gL(.32, .08, 2), rk, inner, 0, 2.08, .12);
-    for (const s of [-1, 1]) part(gS(.05, 8, 6), glowM(0xffa020, 2), inner, s * .1, 2.12, .4, false);
-    part(gS(.15), lava, inner, 0, 1.4, .5, false); const gl = glowSprite(0xff7a20, 1.4, .6); gl.position.set(0, 1.4, .6); inner.add(gl);
+    eyes(inner, 2.12, .36, .12, .08, 0x2a3a5a, false);
+    part(gS(.12), M(0x60c0ff, { tex: 'none', emissive: 0x3090ff, emissiveIntensity: .5 }), inner, 0, 1.4, .52, false);
     for (const s of [-1, 1]) { part(gL(.25, .08, 4), moss, inner, s * .52, 1.78, -.05).scale.y = .4;
       const ap = new THREE.Group(); ap.position.set(s * .78, 1.7, 0); inner.add(ap);
       part(gL(.28, .08, 5), rk, ap, 0, -.2, 0); part(gL(.3, .08, 6), rk, ap, 0, -.65, .05); part(gL(.32, .1, 7), rk, ap, 0, -1.05, .1); arms.push(ap);
@@ -1919,12 +1926,12 @@ function buildMonsterMesh(type) {
     return { g, inner, legs, arms, wings };
   }
   // humanoids
-  const o = type === 'goblin' ? { body: 0x4f6b2c, head: 0x5d7a32, cloth: 0x5a3e22, iris: 0xe0c020 }
-    : type === 'archer' ? { body: 0x48632a, head: 0x587530, cloth: 0x3b2a1a, iris: 0xe0c020 }
-    : type === 'mage' ? { body: 0x2a2f6a, head: 0xc8a48a, cloth: 0x1e2250, iris: 0x60a0ff, glowEyes: true }
-    : type === 'king' ? { body: 0x8a1a28, head: 0xd8b090, cloth: 0x5a1020, iris: 0x4a3020 }
+  const o = type === 'goblin' ? { body: 0x6cc24a, head: 0x7ad35a, cloth: 0x8b5a2b }
+    : type === 'archer' ? { body: 0x3f8f5a, head: 0x8fd36a, cloth: 0x6b4423 }
+    : type === 'mage' ? { body: 0x4a5ad8, head: 0xffd2b0, cloth: 0x3a48b0, iris: 0x3a70d0 }
+    : type === 'king' ? { body: 0xc03040, head: 0xffd2b0, cloth: 0x8a1a2a }
     : type === 'mushroom' ? { body: 0xe6dcc0, head: 0xe8dcc4, face: false, foot: 0xc8b898 }
-    : { body: 0x7a6a5a, head: 0x8a7a68, cloth: 0x4a3420, iris: 0xd02010, tusks: true };
+    : { body: 0x8a5ac8, head: 0x9b6ad8, cloth: 0x5a3a2a, tusks: true };
   const h = humanoid(inner, o); legs = h.legs; arms = h.arms;
   if (type === 'goblin' || type === 'archer') for (const s of [-1, 1]) { const e = part(gK(.1, .5, 6), M(o.head), inner, s * .42, 1.68, -.02); e.rotation.z = -s * 1.25; }
   if (type === 'mushroom') { const capC = pick([0xb02a20, 0xa0581a, 0x6a3a8a]);
@@ -1932,7 +1939,7 @@ function buildMonsterMesh(type) {
     part(new THREE.CircleGeometry(.66, 18).rotateX(Math.PI / 2), M(0xd8c8a0, { side: THREE.DoubleSide }), inner, 0, 1.72, 0, false);
     for (let k = 0; k < 7; k++) { const a = k * .9 + R(0, .4), rr = k ? .42 : 0; part(gS(.08, 8, 6), M(0xf4f0e8, { tex: 'none', roughness: .4 }), inner, Math.cos(a) * rr, k ? 2.0 : 2.22, Math.sin(a) * rr, false).scale.y = .5; }
     eyes(inner, 1.55, .3, .12, .07, 0x201010); }
-  if (type === 'brute') { for (const s of [-1, 1]) { const hh = part(gK(.07, .36, 6), M(0xe8dcc0, { tex: 'none', roughness: .4 }), inner, s * .22, 1.94, 0); hh.rotation.z = -s * .35; }
+  if (type === 'brute') { for (const s of [-1, 1]) { const hh = part(gK(.06, .22, 8), M(0xe8dcc0, { tex: 'none', roughness: .4 }), inner, s * .22, 1.94, 0); hh.rotation.z = -s * .35; }
     part(gC(.05, .09, 1.1, 8), M(0x5a3e22, { tex: 'bark' }), arms[1], 0, -.75, .25).rotation.x = Math.PI / 2.4; } // club
   if (type === 'archer') { // hood + bow
     const hood = part(gK(.44, .62, 12), M(0x3b4a2a, { tex: 'bark', bumpScale: .02 }), inner, 0, 1.92, -.06); hood.rotation.x = -.18;
@@ -2190,6 +2197,10 @@ function killMonster(m) {
 }
 // ============================================================ boss system: altars (lairs), 4-ability AI, warning circles, ground hazards
 const lairs = [];
+let nearLair = null, nearLairD = 1e9; // the altar you're standing at (bosses only start when you press Fight)
+const fightBtn = document.getElementById('fightBtn');
+function startBossFight() { const L = nearLair; if (!L || L.boss || L.defeated || !alive || state !== 'play') return; spawnBoss(L); fightBtn.style.display = 'none'; }
+fightBtn.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); startBossFight(); });
 let shake = 0;
 function placeLairs() {
   const far = (x, z) => Math.hypot(x, z) > 60 && Math.abs(x) < HALF - 28 && Math.abs(z) < HALF - 28 && !lairs.some(L => Math.hypot(L.x - x, L.z - z) < 45) && !caveZones.some(Z => Math.hypot(Z.ent.x - x, Z.ent.z - z) < 14);
@@ -2236,7 +2247,7 @@ function updateLair(L, dt) {
   if (L.ring) L.ring.rotation.y += dt * .6;
   if (!idle || !alive) return;
   const P = player.pos, d = Math.hypot(P.x - L.x, P.z - L.z), same = L.zone ? player.under === L.zone : !player.under;
-  if (same && d < (L.zone ? 13 : L.B.water ? 34 : 24)) spawnBoss(L);
+  if (same && d < (L.zone ? 13 : L.B.water ? 34 : 24) && d < nearLairD) { nearLair = L; nearLairD = d; }
 }
 function spawnBoss(L) {
   const B = L.B, parts = buildBossMesh(L.id), lvl = dayNum - 1 + L.lvl, sz = B.size;
@@ -2394,7 +2405,9 @@ const bossEl = document.getElementById('bossbar'), bossName = bossEl.querySelect
 const bossFight = () => monsters.some(m => m.boss && !m.dead && m.aggro && Math.hypot(m.x - player.pos.x, m.z - player.pos.z) < 70);
 function updateBossSystems(dt) {
   const P = player.pos;
-  for (const L of lairs) updateLair(L, dt);
+  nearLair = null; nearLairD = 1e9; for (const L of lairs) updateLair(L, dt);
+  const fb = nearLair && state === 'play' ? `☠️ Fight the ${nearLair.B.name}${dayNum + nearLair.lvl > 1 ? ' (Lv ' + (dayNum + nearLair.lvl) + ')' : ''}<small>${isTouch ? 'Tap' : 'Press G or click'} to start the boss fight</small>` : '';
+  if (fb) { if (fightBtn.innerHTML !== fb) fightBtn.innerHTML = fb; fightBtn.style.display = 'block'; } else if (fightBtn.style.display !== 'none') fightBtn.style.display = 'none';
   for (let i = warns.length - 1; i >= 0; i--) { const w = warns[i]; w.t -= dt; const k = 1 - w.t / w.max; w.fill.scale.setScalar(Math.max(.01, k)); w.ring.material.opacity = .55 + .4 * Math.sin(playTime * 18);
     if (w.t <= 0) { scene.remove(w.g); w.ring.material.dispose(); w.fill.material.dispose(); warns.splice(i, 1); w.fn(w); } }
   for (let i = phaz.length - 1; i >= 0; i--) { const h = phaz[i]; h.life -= dt; const f = Math.min(1, h.life / .8); h.s.material.opacity = .5 * f; h.gs.material.opacity = .35 * f;
@@ -2694,6 +2707,7 @@ addEventListener('keydown', e => {
   if ((e.code === 'Tab' || e.code === 'KeyI') && locked()) document.exitPointerLock();
   if (keys[e.code]) return; keys[e.code] = true;
   if (e.code === 'KeyB') { if (state === 'book') closeBook(); else openBook(); return; }
+  if (e.code === 'KeyG' && state === 'play') { startBossFight(); return; }
   if (e.code === 'KeyP') { if (state === 'play') pauseGame(); else if (state === 'paused') resumeGame(); return; }
   if (state !== 'play') return;
   if (e.code === 'Space') { jump(); jumpHeld = true; }
