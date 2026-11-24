@@ -158,7 +158,7 @@
     <b>Sell</b><span>Drag onto 💰</span>
     <b>Ability</b><span>🌈 items: Right-click · R · ✨</span>
   </div></details>
-  <div class="row"><button id="playBtn" disabled>Generating world…</button><button id="startSettings" class="sec" type="button">⚙️ Settings</button></div>
+  <div class="row"><button id="playBtn" disabled>Generating world…</button><button id="newWorldBtn" class="sec" type="button" style="display:none">🌍 New World</button><button id="startSettings" class="sec" type="button">⚙️ Settings</button></div>
 </div></div>
 <div class="screen" id="deadScreen" style="display:none"><div class="panel">
   <h1>Defeated!</h1>
@@ -200,7 +200,12 @@ const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 const lerp = (a, b, t) => a + (b - a) * t;
 const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
-const rand = mulberry32(Math.floor(Math.random() * 1e9));
+// ---- saved game (made by sleeping in a bed): the world is rebuilt from the same seed, then your progress is put back
+const SAVE_KEY = 'mq-save-v1';
+function loadSave() { try { const s = JSON.parse(localStorage.getItem(SAVE_KEY)); return s && s.v === 1 && s.seed ? s : null; } catch (e) { return null; } }
+const SAVE = loadSave();
+const WORLD_SEED = SAVE ? SAVE.seed : 1 + Math.floor(Math.random() * 1e9);
+const rand = mulberry32(WORLD_SEED);
 const R = (a, b) => a + rand() * (b - a);
 const pick = arr => arr[Math.floor(rand() * arr.length)];
 // phones/tablets: a coarse (finger) pointer. Laptops with touchscreens keep mouse controls until you actually touch the screen.
@@ -299,6 +304,9 @@ TEX.metal = makeTex(128, (x, S) => { x.fillStyle = '#e0e0e0'; x.fillRect(0, 0, S
 TEX.waterN = makeTex(256, (x, S) => { const F = fbmField(S, [4, 8, 16, 32], .5), img = x.createImageData(S, S);
   for (let i = 0; i < S; i++) for (let j = 0; j < S; j++) { const q = i * S + j, dx = F[i * S + (j + 1) % S] - F[i * S + (j + S - 1) % S], dy = F[((i + 1) % S) * S + j] - F[((i + S - 1) % S) * S + j];
     const nx = -dx * 6, ny = -dy * 6, l = Math.hypot(nx, ny, 1); img.data[q * 4] = (nx / l * .5 + .5) * 255; img.data[q * 4 + 1] = (ny / l * .5 + .5) * 255; img.data[q * 4 + 2] = (1 / l * .5 + .5) * 255; img.data[q * 4 + 3] = 255; } x.putImageData(img, 0, 0); }, 70);
+TEX.brick = makeTex(128, (x, S) => { x.fillStyle = '#3a3a3a'; x.fillRect(0, 0, S, S);
+  for (let row = 0; row < 8; row++) for (let col = -1; col < 5; col++) { const bx = col * 32 + (row % 2) * 16 + 1.5, by = row * 16 + 1.5, v = 150 + trand() * 90; x.fillStyle = `rgb(${v},${v * .92},${v * .88})`; x.fillRect(bx, by, 29, 13);
+    for (let q = 0; q < 6; q++) { x.fillStyle = `rgba(0,0,0,${trand() * .2})`; x.fillRect(bx + trand() * 27, by + trand() * 11, 2, 2); } } });
 TEX.grass = (() => { const c = document.createElement('canvas'); c.width = 64; c.height = 64; const x = c.getContext('2d');
   for (let k = 0; k < 22; k++) { const bx = 4 + trand() * 56, h = 30 + trand() * 32, lean = (trand() - .5) * 18, w = 2 + trand() * 2.5, v = 150 + trand() * 105;
     x.fillStyle = `rgb(${v * .8},${v},${v * .7})`; x.beginPath(); x.moveTo(bx - w, 64); x.quadraticCurveTo(bx + lean * .3, 64 - h * .6, bx + lean, 64 - h); x.quadraticCurveTo(bx + lean * .3 + w * .4, 64 - h * .6, bx + w, 64); x.fill(); }
@@ -347,6 +355,7 @@ function glowSprite(color, size, op = 1) { const s = new THREE.Sprite(new THREE.
 
 // ============================================================ world generation
 const WORLD = 440, SEG = 176, STEP = WORLD / SEG, HALF = WORLD / 2, N = SEG + 1, WATER = -4;
+const wl = g => g < WATER - 20 ? g : Math.max(g, WATER); // water level only matters near the surface (not in the Underworld)
 const H = new Float32Array(N * N);
 const craters = [];
 const circles = [], boxes = [], platforms = [], structures = [], houses = [], caves = [], chests = [], caveZones = [];
@@ -438,8 +447,9 @@ function landSpot(minH = WATER + 1.5, maxH = 30, maxSlope = .5, r = 0, minD = 0,
   } return null;
 }
 function groundAt(x, z, y) {
-  for (const Z of caveZones) if (y < Z.floor + Z.ht && y > Z.floor - 5 && Math.hypot(x - Z.x, z - Z.z) < Z.r + 2) return Z.floor; // underground cave floor
-  let g = getH(x, z);
+  let g = null;
+  for (const Z of caveZones) if (y < Z.floor + Z.ht && y > Z.floor - 5 && Math.hypot(x - Z.x, z - Z.z) < Z.r + 2) { g = Z.floor; break; } // cave / underworld / skylands floor
+  if (g === null) g = getH(x, z);
   for (const p of platforms) if (x > p.minX && x < p.maxX && z > p.minZ && z < p.maxZ && p.top <= y + 1.6) g = Math.max(g, p.top);
   return g;
 }
@@ -521,39 +531,52 @@ function makeChest(x, z, y, rotY = 0) {
 }
 
 // ---------- houses
+const beds = [];
 function buildHouse(x, z) {
-  const rot = Math.floor(rand() * 4) * Math.PI / 2, W = 8, D = 8, WH = 3.4, T = .3;
-  let fy = -1e9; for (const [dx, dz] of [[-4.5, -4.5], [4.5, -4.5], [-4.5, 4.5], [4.5, 4.5], [0, 0]]) fy = Math.max(fy, getH(x + dx, z + dz)); fy += .2;
+  const rot = Math.floor(rand() * 4) * Math.PI / 2, W = 12, D = 10, WH = 4.2, T = .3, DW = 2.2, DH = 2.8;
+  let fy = -1e9; for (const dx of [-6.5, 0, 6.5]) for (const dz of [-6.5, 0, 6.5]) fy = Math.max(fy, getH(x + dx, z + dz)); fy += .2;
   const g = new THREE.Group(); g.position.set(x, fy, z); g.rotation.y = rot; scene.add(g);
   const wallC = pick([0xeedcb4, 0xd9c29a, 0xf2ead8, 0xcfae84, 0xe8c9c0]), roofC = pick([0xc0503f, 0x4a6fa5, 0x7a4a2a, 0x5f8a4a, 0x8a5aa0]);
-  const down = 3, wh = WH + down, wy = (WH - down) / 2;
-  mesh(new THREE.BoxGeometry(W, .3, D), 0xa0703f, null, g, 0, -.15, 0);
+  const down = 3, wh = WH + down, wy = (WH - down) / 2, side = (W - DW) / 2, wood = { map: texRep(TEX.wood, 3) };
+  mesh(new THREE.BoxGeometry(W, .3, D), 0xa0703f, wood, g, 0, -.15, 0);
   const walls = [
     mesh(new THREE.BoxGeometry(W, wh, T), wallC, null, g, 0, wy, -D / 2),
     mesh(new THREE.BoxGeometry(T, wh, D), wallC, null, g, -W / 2, wy, 0),
     mesh(new THREE.BoxGeometry(T, wh, D), wallC, null, g, W / 2, wy, 0),
-    mesh(new THREE.BoxGeometry(3, wh, T), wallC, null, g, -2.5, wy, D / 2),
-    mesh(new THREE.BoxGeometry(3, wh, T), wallC, null, g, 2.5, wy, D / 2),
+    mesh(new THREE.BoxGeometry(side, wh, T), wallC, null, g, -(DW / 2 + side / 2), wy, D / 2),
+    mesh(new THREE.BoxGeometry(side, wh, T), wallC, null, g, DW / 2 + side / 2, wy, D / 2),
   ];
-  mesh(new THREE.BoxGeometry(2, .8, T), wallC, null, g, 0, WH - .4, D / 2);
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) mesh(new THREE.BoxGeometry(.4, wh, .4), 0x6b4423, null, g, sx * W / 2, wy, sz * D / 2);
-  for (const sx of [-1, 1]) { const w = mesh(new THREE.BoxGeometry(.1, 1, 1.4), 0x9fdcff, { emissive: 0x223344 }, g, sx * (W / 2 + .17), 1.9, 0, false);
-    mesh(new THREE.BoxGeometry(.14, 1.2, .12), 0x6b4423, null, g, sx * (W / 2 + .19), 1.9, 0); }
-  mesh(new THREE.BoxGeometry(2.1, 2.7, .1), 0x6b4423, null, g, 0, 1.35, D / 2 + .2).visible = false;
+  mesh(new THREE.BoxGeometry(DW, WH - DH, T), wallC, null, g, 0, DH + (WH - DH) / 2, D / 2);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) mesh(new THREE.BoxGeometry(.4, wh, .4), 0x6b4423, wood, g, sx * W / 2, wy, sz * D / 2);
+  for (const sx of [-1, 1]) for (const wz of [-2.2, 2.2]) { mesh(new THREE.BoxGeometry(.1, 1.1, 1.4), 0x9fdcff, { emissive: 0x223344, roughness: .1, metalness: .3 }, g, sx * (W / 2 + .17), 2.2, wz, false);
+    mesh(new THREE.BoxGeometry(.14, 1.3, .12), 0x6b4423, null, g, sx * (W / 2 + .19), 2.2, wz); }
+  // a working door: swings open when you walk up to it, shuts behind you (monsters can't get in!)
+  const door = new THREE.Group(); door.position.set(-DW / 2, 0, D / 2); g.add(door);
+  mesh(new THREE.BoxGeometry(DW - .06, DH - .05, .12), 0x7a4a24, wood, door, DW / 2, DH / 2, 0);
+  for (const yy of [.6, 2.1]) mesh(new THREE.BoxGeometry(DW - .2, .1, .14), 0x2a2a2a, { metalness: .7, roughness: .4 }, door, DW / 2, yy, 0);
+  mesh(new THREE.SphereGeometry(.07, 10, 8), 0xffd040, { metalness: .9, roughness: .2 }, door, DW - .3, 1.3, .1);
+  // roof
   const roof = new THREE.Group(); g.add(roof);
-  const rm = mesh(new THREE.ConeGeometry(W * .8, 3, 4), roofC, { side: THREE.DoubleSide }, roof, 0, WH + 1.5, 0); rm.rotation.y = Math.PI / 4;
-  mesh(new THREE.BoxGeometry(.8, 2, .8), 0x8a8580, null, roof, 2, WH + 2, -1.5);
-  // furniture
-  mesh(new THREE.BoxGeometry(1.6, .5, 2.6), 0xd04050, null, g, -2.8, .25, 2.2);
-  mesh(new THREE.BoxGeometry(1.4, .1, 1), 0x8b5a2b, null, g, 2.6, .9, 2);
-  mesh(new THREE.CylinderGeometry(.08, .08, .9, 6), 0x8b5a2b, null, g, 2.6, .45, 2);
+  const rm = mesh(new THREE.ConeGeometry(W * .82, 3.6, 4), roofC, { side: THREE.DoubleSide }, roof, 0, WH + 1.8, 0); rm.rotation.y = Math.PI / 4; rm.scale.z = D / W;
+  mesh(new THREE.BoxGeometry(.9, 2.2, .9), 0x8a8580, null, roof, 3, WH + 2.2, -2);
+  // furniture: bed (sleep to save!), table + chairs, rug, shelf
+  const bed = new THREE.Group(); bed.position.set(-W / 2 + 1.25, 0, -D / 2 + 1.7); g.add(bed);
+  mesh(new THREE.BoxGeometry(1.7, .4, 2.7), 0x7a4a24, wood, bed, 0, .2, 0); mesh(new THREE.BoxGeometry(1.55, .22, 2.5), 0xf4f0e6, null, bed, 0, .5, .05);
+  mesh(new THREE.BoxGeometry(1.58, .14, 1.7), pick([0x3b7dd8, 0xc0503f, 0x5f8a4a, 0x8a5aa0]), null, bed, 0, .62, .45); mesh(new THREE.BoxGeometry(1.1, .18, .5), 0xffffff, null, bed, 0, .67, -.9);
+  mesh(new THREE.BoxGeometry(1.7, 1.2, .14), 0x6b4423, wood, bed, 0, .6, -1.35);
+  mesh(new THREE.BoxGeometry(1.8, .1, 1.2), 0x8b5a2b, wood, g, 3.2, 1, 1.2); mesh(new THREE.CylinderGeometry(.08, .08, 1, 8), 0x8b5a2b, wood, g, 3.2, .5, 1.2);
+  for (const cx2 of [2, 4.4]) mesh(new THREE.BoxGeometry(.5, .5, .5), 0x8b5a2b, wood, g, cx2, .25, 2.3);
+  mesh(new THREE.BoxGeometry(3.2, .02, 2.2), pick([0xb04040, 0x4060b0, 0xc09040]), null, g, 0, .01, 1.2, false);
+  mesh(new THREE.BoxGeometry(2.2, 2.2, .5), 0x6b4423, wood, g, W / 2 - 1.5, 1.1, -D / 2 + .45);
   g.updateMatrixWorld(true);
-  const bb = new THREE.Box3();
-  for (const w of walls) { bb.setFromObject(w); boxes.push({ minX: bb.min.x, maxX: bb.max.x, minY: bb.min.y, maxY: bb.max.y, minZ: bb.min.z, maxZ: bb.max.z }); }
+  const bb = new THREE.Box3(), toBox = o => { bb.setFromObject(o); return { minX: bb.min.x, maxX: bb.max.x, minY: bb.min.y, maxY: bb.max.y, minZ: bb.min.z, maxZ: bb.max.z }; };
+  for (const w of walls) boxes.push(toBox(w));
+  const doorBox = toBox(door); boxes.push(doorBox);
   platforms.push({ minX: x - W / 2, maxX: x + W / 2, minZ: z - D / 2, maxZ: z + D / 2, top: fy });
-  const cp = g.localToWorld(new V3(0, 0, -D / 2 + 1.1));
-  makeChest(cp.x, cp.z, fy, rot);
-  houses.push({ x, z, roof, half: W / 2 + .3 }); structures.push({ x, z, r: 8, kind: 'house' });
+  const cp = g.localToWorld(new V3(0, 0, -D / 2 + 1.1)); makeChest(cp.x, cp.z, fy, rot);
+  const bp = g.localToWorld(new V3(-W / 2 + 1.25, 0, -D / 2 + 1.7)), sp = g.localToWorld(new V3(-W / 2 + 2.6, 0, -D / 2 + 2)), dp = g.localToWorld(new V3(0, 0, D / 2));
+  beds.push({ x: bp.x, z: bp.z, y: fy, spawn: { x: sp.x, y: fy + .05, z: sp.z } });
+  houses.push({ x, z, roof, half: W / 2 + .3, door, doorBox, doorPos: dp, open: 0 }); structures.push({ x, z, r: 11, kind: 'house' });
 }
 
 // ---------- caves
@@ -717,6 +740,104 @@ function buildBiome(b) {
   structures.push({ x, z, r: r + 4, kind: 'biome' });
 }
 
+// ============================================================ REALMS: the Underworld (dig very deep) and the Skylands (climb to the clouds)
+let hellZone = null, skyZone = null;
+const FAR = { x: 9999, z: 9999, y: 0 };
+CAVE_T.hell = { name: 'Underworld', floor: 0x3a1410, wall: 0x2a0c08, ceil: 0x1a0604, rocks: [0x3a1a14, 0x4a2018], gems: [0xff5a10, 0xff2a10], fog: 0x3a0a04, beam: 0xff4010, theme: null, col: '#ff5a30' };
+CAVE_T.sky = { name: 'Skylands', floor: 0xffffff, wall: 0xffffff, ceil: 0xffffff, rocks: [0xffffff], gems: [0xfff0a0], fog: 0xcfe8ff, beam: 0xfff0a0, theme: null, col: '#fff0a0' };
+function realmChest(Z, x, z, y, keys, rich) { const c = makeChest(x, z, y, rand() * 6); c.cave = Z; c.theme = keys; c.rich = rich; c.realm = Z.realm; c.beam.material.color.setHex(CAVE_T[Z.type].beam);
+  yb(circles[circles.length - 1], Z.floor - 1, Z.floor + Z.ht); Z.group.attach(c.g); return c; }
+function buildHell() {
+  const Z = { type: 'hell', realm: 'hell', x: 0, z: 0, r: 68, floor: -200, ht: 42, ent: FAR, spawnT: 2, inside: false, found: false, mtypes: ['imp', 'hellhound', 'demon', 'hellhound'], lvlBonus: 2, big: true,
+    spawn: { x: -4, z: 0 }, exit: { x: 6, z: 0 }, lairOff: { x: 40, z: 0 } };
+  hellZone = Z; caveZones.push(Z);
+  const g = new THREE.Group(); g.position.set(Z.x, Z.floor, Z.z); g.visible = false; scene.add(g); Z.group = g; const fy = Z.floor, r = Z.r;
+  const rk = texRep(TEX.rock, 16), rkW = texRep(TEX.rock, 20), brickM = new THREE.MeshStandardMaterial({ color: 0x8a3020, map: TEX.brick, bumpMap: TEX.brick, bumpScale: .06, roughness: .9 });
+  const fl = new THREE.Mesh(new THREE.CircleGeometry(r + 2, 64).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x5a2016, map: rk, bumpMap: rk, bumpScale: .1, roughness: .95 })); fl.receiveShadow = true; g.add(fl);
+  g.add(new THREE.Mesh(lumpy(new THREE.CylinderGeometry(r + 2, r + 2, Z.ht + 1, 72, 10, true).translate(0, Z.ht / 2, 0), 1.6, .25, 21), new THREE.MeshStandardMaterial({ color: 0x3a120c, side: THREE.BackSide, map: rkW, bumpMap: rkW, bumpScale: .12, roughness: .95, emissive: 0x200402 })));
+  g.add(new THREE.Mesh(new THREE.CircleGeometry(r + 2, 64).rotateX(Math.PI / 2).translate(0, Z.ht, 0), new THREE.MeshStandardMaterial({ color: 0x1a0604, map: rk, emissive: 0x2a0602, roughness: 1 })));
+  for (const [lx, lz] of [[25, 25], [-25, 25], [25, -25], [-25, -25], [0, 0]]) { const l = new THREE.PointLight(0xff4a18, 1.3, 70, 1.4); l.position.set(lx, 14, lz); g.add(l); }
+  // lava everywhere (but leave paths): pools burn you, monsters here don't mind
+  const keep = [[Z.spawn.x, Z.spawn.z, 9], [Z.exit.x, Z.exit.z, 4], [Z.lairOff.x, Z.lairOff.z, 12]], pools = [];
+  const lavaM = new THREE.MeshBasicMaterial({ color: 0xff4a08 }), lavaM2 = new THREE.MeshBasicMaterial({ color: 0xffa030 });
+  for (let k = 0; k < 400 && pools.length < 22; k++) { const a = rand() * 6.28, d = R(10, r - 4), px = Math.cos(a) * d, pz = Math.sin(a) * d, pr = R(2.5, 6.5);
+    if (keep.some(([kx, kz, kr]) => Math.hypot(px - kx, pz - kz) < kr + pr) || pools.some(p => Math.hypot(p[0] - px, p[1] - pz) < p[2] + pr + 2.2)) continue;
+    pools.push([px, pz, pr]); const pool = new THREE.Mesh(new THREE.CircleGeometry(pr, 28).rotateX(-Math.PI / 2), lavaM); pool.position.set(px, .05, pz); g.add(pool);
+    const hot = new THREE.Mesh(new THREE.CircleGeometry(pr * .55, 20).rotateX(-Math.PI / 2), lavaM2); hot.position.set(px + R(-.5, .5), .07, pz + R(-.5, .5)); g.add(hot);
+    const gl = glowSprite(0xff5010, pr * 2.6, .55); gl.position.set(px, 1, pz); g.add(gl); lavaPools.push({ x: Z.x + px, z: Z.z + pz, y: fy, r: pr }); }
+  for (let k = 0; k < 10; k++) { const a = k / 10 * Math.PI * 2 + R(0, .3), fall = glowSprite(0xff6010, 1, .55); fall.scale.set(4, Z.ht * .9, 1); fall.position.set(Math.cos(a) * (r - .5), Z.ht * .45, Math.sin(a) * (r - .5)); g.add(fall); }
+  // hell brick ruins and pillars
+  const solid = (w, h, d, px, py, pz) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), brickM); m.position.set(px, py + h / 2, pz); m.castShadow = m.receiveShadow = true; g.add(m);
+    boxes.push({ minX: Z.x + px - w / 2, maxX: Z.x + px + w / 2, minY: fy + py, maxY: fy + py + h, minZ: Z.z + pz - d / 2, maxZ: Z.z + pz + d / 2 }); platforms.push({ minX: Z.x + px - w / 2, maxX: Z.x + px + w / 2, minZ: Z.z + pz - d / 2, maxZ: Z.z + pz + d / 2, top: fy + py + h }); };
+  const freeAt = (px, pz, rr) => !keep.some(([kx, kz, kr]) => Math.hypot(px - kx, pz - kz) < kr + rr) && !pools.some(p => Math.hypot(p[0] - px, p[1] - pz) < p[2] + rr);
+  for (let k = 0, n = 0; k < 300 && n < 14; k++) { const a = rand() * 6.28, d = R(12, r - 8), px = Math.cos(a) * d, pz = Math.sin(a) * d; if (!freeAt(px, pz, 4)) continue; n++;
+    if (rand() < .5) solid(rand() < .5 ? 7 : 1.4, R(1.5, 3.5), rand() < .5 ? 1.4 : 7, px, 0, pz); else { const hh = rand() < .4 ? Z.ht : R(4, 10); solid(2, hh, 2, px, 0, pz); } }
+  // fortress walls around the boss
+  const fx = Z.lairOff.x, fz = Z.lairOff.z; for (const [wx, wz, w, d] of [[fx - 11, fz - 6, 1.4, 8], [fx - 11, fz + 6, 1.4, 8], [fx + 11, fz, 1.4, 20], [fx, fz - 11, 22, 1.4], [fx, fz + 11, 22, 1.4]]) solid(w, 4, d, wx, 0, wz);
+  for (const [tx, tz] of [[fx - 11, fz - 11], [fx + 11, fz - 11], [fx - 11, fz + 11], [fx + 11, fz + 11]]) solid(3, 8, 3, tx, 0, tz);
+  for (let k = 0; k < 24; k++) { const a = rand() * 6.28, d = R(6, r - 2), px = Math.cos(a) * d, pz = Math.sin(a) * d, hh = R(1.5, 4); if (!freeAt(px, pz, 1)) continue;
+    mesh(new THREE.ConeGeometry(R(.4, .9), hh, 7), M(0x2a0e0a, { tex: 'rock' }), null, g, px, hh / 2, pz, false); circles.push(yb({ x: Z.x + px, z: Z.z + pz, r: .5 }, fy - 1, fy + Z.ht)); }
+  // treasure only found down here
+  const spots = []; for (let k = 0; k < 400 && spots.length < 12; k++) { const a = rand() * 6.28, d = R(8, r - 5), px = Math.cos(a) * d, pz = Math.sin(a) * d;
+    if (!freeAt(px, pz, 1.5) || spots.some(s => Math.hypot(s[0] - px, s[1] - pz) < 7) || circles.some(c => c.maxY && Math.hypot(c.x - Z.x - px, c.z - Z.z - pz) < c.r + 1.4) || boxes.some(b => Z.x + px > b.minX - 1 && Z.x + px < b.maxX + 1 && Z.z + pz > b.minZ - 1 && Z.z + pz < b.maxZ + 1)) continue; spots.push([px, pz]); }
+  spots.forEach(([px, pz], i) => realmChest(Z, Z.x + px, Z.z + pz, fy, REALM_KEYS.hell, i % 3 === 0 ? 2 : 1));
+  // the way back up: a pillar of light
+  const sh = glowSprite(0xffe0b0, 1, .5); sh.scale.set(2.6, Z.ht, 1); sh.position.set(Z.exit.x, Z.ht / 2, Z.exit.z); g.add(sh);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(1, 1.4, 24).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffe0a0 })); ring.position.set(Z.exit.x, .08, Z.exit.z); g.add(ring);
+  Z.exit = { x: Z.x + Z.exit.x, z: Z.z + Z.exit.z };
+}
+function buildSky() {
+  const b = biomes.find(b => b.type === 'sky'); let s = b ? { x: b.x, z: b.z, h: getH(b.x, b.z) } : landSpot(WATER + 3, 30, .5, 0, 90, 300) || { x: 120, z: -120, h: getH(120, -120) };
+  const cx = clamp(s.x, -HALF + 60, HALF - 60), cz = clamp(s.z, -HALF + 60, HALF - 60);
+  const Z = { type: 'sky', realm: 'sky', open: true, always: true, x: cx, z: cz, r: 40, floor: 112, ht: 40, ent: FAR, spawnT: 2, found: false, mtypes: ['sprite', 'angel', 'hawk'], lvlBonus: 2, big: true, lairOff: { x: -20, z: 8 } };
+  skyZone = Z; caveZones.push(Z);
+  const g = new THREE.Group(); g.position.set(cx, Z.floor, cz); scene.add(g); Z.group = g; const fy = Z.floor, r = Z.r;
+  const cloudM = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, emissive: 0x3a4250, map: TEX.grain }), puffGeo = lumpy(new THREE.SphereGeometry(1, 14, 10), .15, 1.5, 9);
+  const top = new THREE.Mesh(new THREE.CircleGeometry(r + 2.5, 64).rotateX(-Math.PI / 2), cloudM); top.position.y = -.05; top.receiveShadow = true; g.add(top);
+  const puffs = [];
+  for (let k = 0; k < 70; k++) { const a = k / 70 * Math.PI * 2 + R(0, .08), rr = r + R(.5, 2.5), sz = R(2.2, 4.5); puffs.push([Math.cos(a) * rr, R(-1, 1.2), Math.sin(a) * rr, sz, sz * R(.6, .9)]); }   // fluffy rim = soft wall
+  for (let k = 0; k < 60; k++) { const a = rand() * 6.28, rr = Math.sqrt(rand()) * r, sz = R(4, 8); puffs.push([Math.cos(a) * rr, -R(2.5, 5), Math.sin(a) * rr, sz, sz * .5]); }    // underside seen from the ground
+  const im = new THREE.InstancedMesh(puffGeo, cloudM, puffs.length); puffs.forEach((p, i) => { dummy.position.set(p[0], p[1], p[2]); dummy.scale.set(p[3], p[4], p[3]); dummy.rotation.set(0, rand() * 6, 0); dummy.updateMatrix(); im.setMatrixAt(i, dummy.matrix); }); im.receiveShadow = true; g.add(im);
+  // cloud hills you can stand on
+  const hillSpots = [];
+  for (let k = 0; k < 7; k++) { const a = rand() * 6.28, d = R(14, r - 6), px = Math.cos(a) * d, pz = Math.sin(a) * d, hs = R(2.5, 4); if (Math.hypot(px - Z.lairOff.x, pz - Z.lairOff.z) < 13) continue; hillSpots.push([px, pz]);
+    const h = new THREE.Mesh(puffGeo, cloudM); h.scale.set(hs, 1.4, hs); h.position.set(px, 0, pz); h.castShadow = h.receiveShadow = true; g.add(h);
+    platforms.push({ minX: cx + px - hs * .7, maxX: cx + px + hs * .7, minZ: cz + pz - hs * .7, maxZ: cz + pz + hs * .7, top: fy + 1.2 }); }
+  // golden temple in the middle
+  const marble = new THREE.MeshStandardMaterial({ color: 0xf6f2e8, map: TEX.rock, bumpMap: TEX.rock, bumpScale: .02, roughness: .4 }), gold = new THREE.MeshStandardMaterial({ color: 0xffcf40, metalness: .9, roughness: .25 });
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(8, 8.6, .8, 24), marble); base.position.y = .4; base.receiveShadow = true; g.add(base);
+  platforms.push({ minX: cx - 5.6, maxX: cx + 5.6, minZ: cz - 5.6, maxZ: cz + 5.6, top: fy + .8 });
+  for (let k = 0; k < 8; k++) { const a = k / 8 * Math.PI * 2, px = Math.cos(a) * 7, pz = Math.sin(a) * 7;
+    const col = new THREE.Mesh(new THREE.CylinderGeometry(.45, .5, 6, 14), marble); col.position.set(px, 3.8, pz); col.castShadow = true; g.add(col);
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(1.2, .35, 1.2), gold); cap.position.set(px, 6.9, pz); g.add(cap); circles.push(yb({ x: cx + px, z: cz + pz, r: .55 }, fy - 1, fy + Z.ht)); }
+  const halo = new THREE.Mesh(new THREE.TorusGeometry(7, .25, 8, 48), gold); halo.rotation.x = Math.PI / 2; halo.position.y = 7.2; g.add(halo);
+  const orb = glowSprite(0xfff0a0, 6, .7); orb.position.y = 4; g.add(orb);
+  // rainbow arch
+  ['#ff4d4d', '#ffb84d', '#fff04d', '#5dff6a', '#4dd2ff', '#9a6bff'].forEach((c, i) => { const t = new THREE.Mesh(new THREE.TorusGeometry(16 - i * .5, .25, 6, 40, Math.PI), new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: .55 })); t.position.set(10, 0, -24); t.rotation.y = .6; g.add(t); });
+  // treasure only found up here
+  const spots = []; for (let k = 0; k < 300 && spots.length < 10; k++) { const a = rand() * 6.28, d = R(10, r - 4), px = Math.cos(a) * d, pz = Math.sin(a) * d;
+    if (Math.hypot(px - Z.lairOff.x, pz - Z.lairOff.z) < 12 || spots.some(s2 => Math.hypot(s2[0] - px, s2[1] - pz) < 7) || hillSpots.some(h => Math.hypot(h[0] - px, h[1] - pz) < 5)) continue; spots.push([px, pz]); }
+  spots.forEach(([px, pz], i) => realmChest(Z, cx + px, cz + pz, fy, REALM_KEYS.sky, i % 3 === 0 ? 2 : 1));
+  realmChest(Z, cx + 1.5, cz + 1.5, fy + .8, REALM_KEYS.sky, 3);
+  // way down: a golden cloud slide at the edge
+  const ea = Math.atan2(-Z.lairOff.z, -Z.lairOff.x); Z.exit = { x: cx + Math.cos(ea) * (r - 4), z: cz + Math.sin(ea) * (r - 4) };
+  const sl = glowSprite(0xfff0a0, 1, .55); sl.scale.set(2.4, 10, 1); sl.position.set(Z.exit.x - cx, 5, Z.exit.z - cz); g.add(sl);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(1, 1.4, 24).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xfff0a0 })); ring.position.set(Z.exit.x - cx, .08, Z.exit.z - cz); g.add(ring);
+  // the hidden way up: a spiral of cloud steps rising from the ground into the sky
+  const R2 = r + 6, startA = ea + Math.PI * .7; let a = startA, y = getH(cx + Math.cos(a) * R2, cz + Math.sin(a) * R2) + 1.2; const steps = [];
+  while (y < fy - .2) { steps.push([cx + Math.cos(a) * R2, y, cz + Math.sin(a) * R2]); y += 1.45; a += 2.8 / R2; }
+  steps.push([cx + Math.cos(a) * (r + 3.5), fy - .5, cz + Math.sin(a) * (r + 3.5)]); a += 1.2 / R2; steps.push([cx + Math.cos(a) * (r + 1), fy, cz + Math.sin(a) * (r + 1)]);
+  Z.stairBase = { x: steps[0][0] + 3, z: steps[0][2], y: getH(steps[0][0] + 3, steps[0][2]) };
+  const sm = new THREE.InstancedMesh(puffGeo, cloudM, steps.length); steps.forEach(([px, py, pz], i) => { dummy.position.set(px, py - .35, pz); dummy.scale.set(1.7, .55, 1.7); dummy.rotation.set(0, i, 0); dummy.updateMatrix(); sm.setMatrixAt(i, dummy.matrix);
+    platforms.push({ minX: px - 1.4, maxX: px + 1.4, minZ: pz - 1.4, maxZ: pz + 1.4, top: py }); }); sm.castShadow = true; scene.add(sm);
+  structures.push({ x: steps[0][0], z: steps[0][2], r: 5, kind: 'stairs' });
+}
+// digging below sea level far enough breaks through into the Underworld
+function enterHell(x, z) { const Z = hellZone; if (!Z || player.under || !alive) return;
+  Z.ent = { x, z, y: getH(x, z) }; const P = player.pos; P.set(Z.x + Z.spawn.x, Z.floor + 4, Z.z + Z.spawn.z); player.vy = 0; player.portalCd = 2; player.under = Z;
+  for (const m of monsters) if (!m.cave && !m.dead && !m.boss) { m.dead = true; scene.remove(m.g); }
+  shake = .9; sfx(60, 1.2, 'sawtooth', .09, .4); flash(P.clone().add(new V3(0, 1, 0)), 0xff4010, 12, .7);
+  toast(Z.found ? '🔥 Back in the <b>Underworld</b>' : '🔥 <b style="color:#ff6a30">You broke through into the UNDERWORLD!</b><br>Lava everywhere, demons — and treasure found nowhere else.<br>Stand in the light pillar to climb back up.', 6500); Z.found = true; }
 // ---------- vegetation / rocks
 const dummy = new THREE.Object3D();
 function instanced(geo, material, list, setup) {
@@ -814,7 +935,19 @@ const BASE = {
   abyss: { e: '🌑', p: 26, w: 0, boss: 'behemoth' }, heartwood: { e: '🌳', p: 20, w: 0, boss: 'treant' },
   // --- VOID CORE: merges ONLY onto a bag — that bag (and what's inside it) survives death
   voidcore: { e: '🟣', p: 1, w: 0 },
+  // --- UNDERWORLD items: only in Underworld chests and from its monsters
+  lavabucket: { e: '🪣', p: 18, w: 0, realm: 'hell' }, hellbrick: { e: '🧱', p: 20, w: 0, realm: 'hell' }, hellfire: { e: '🔥', p: 22, w: 0, realm: 'hell' }, demonhorn: { e: '😈', p: 22, w: 0, realm: 'hell' },
+  brimstone: { e: '🌋', p: 22, w: 0, realm: 'hell' }, soulflame: { e: '💠', p: 18, w: 0, realm: 'hell' }, obsidian: { e: '🗡️', p: 34, w: 0, realm: 'hell' }, pitchfork: { e: '🔱', p: 30, w: 0, realm: 'hell' },
+  magmacore: { e: '🟠', p: 20, w: 0, realm: 'hell' }, hellskull: { e: '💀', p: 22, w: 0, realm: 'hell' },
+  // --- SKYLANDS items: only in Skylands chests and from its monsters
+  cloudbucket: { e: '🪣', p: 18, w: 0, realm: 'sky' }, waterbucket: { e: '🪣', p: 16, w: 0, realm: 'sky' }, cloud: { e: '☁️', p: 16, w: 0, realm: 'sky' }, halo: { e: '😇', p: 18, w: 0, realm: 'sky' },
+  harp: { e: '🎵', p: 28, w: 0, realm: 'sky' }, angelwing: { e: '🪽', p: 18, w: 0, realm: 'sky' }, skyspear: { e: '🔱', p: 32, w: 0, realm: 'sky' }, sunshard: { e: '🔆', p: 22, w: 0, realm: 'sky' },
+  skypearl: { e: '🫧', p: 18, w: 0, realm: 'sky' }, starlight: { e: '🌟', p: 30, w: 0, realm: 'sky' },
+  // --- boss items of the two new realms
+  infernoblade: { e: '⚔️', p: 42, w: 0, boss: 'overlord' }, seraphbow: { e: '🏹', p: 40, w: 0, boss: 'seraph' },
 };
+const REALM_KEYS = { hell: Object.keys(BASE).filter(k => BASE[k].realm === 'hell'), sky: Object.keys(BASE).filter(k => BASE[k].realm === 'sky') };
+const realmOf = t => { for (const k in t) if (BASE[k] && BASE[k].realm) return BASE[k].realm; return null; };
 const BOSS_KEYS = Object.keys(BASE).filter(k => BASE[k].boss);
 const isBossT = t => BOSS_KEYS.some(k => t[k]);
 const isVC = it => !!(it && it.traits.voidcore && !it.traits.bag);
@@ -833,15 +966,21 @@ const NOUN = { sword: 'Sword', bow: 'Bow', wand: 'Wand', stick: 'Stick', rock: '
   knife: 'Dagger', gem: 'Gem', eye: 'Evil Eye', skull: 'Skull', coins: 'Coin Bag', bell: 'Bell', web: 'Web', mirror: 'Mirror', meat: 'Meat', horn: 'Horn',
   spring: 'Spring', glider: 'Glider', fin: 'Fin', skate: 'Skateboard', ufo: 'Saucer', helmet: 'Helmet', chestplate: 'Chestplate', leggings: 'Leggings', bag: 'Bag', pickaxe: 'Pickaxe', void: 'Void Orb', sun: 'Sun Stone', chain: 'Chain', echo: 'Echo Shell', ghost: 'Ghost', anchor: 'Anchor', lantern: 'Lantern', battery: 'Battery', thorns: 'Cactus', crown: 'Crown',
   meteor: 'Meteor Stone', blink: 'Portal Orb', dragon: 'Dragon Soul', nova: 'Frost Core', rainbow: 'Rainbow Charm', storm: 'Storm Cloud',
+  lavabucket: 'Lava Bucket', hellbrick: 'Hell Brick', hellfire: 'Hellfire', demonhorn: 'Demon Horn', brimstone: 'Brimstone', soulflame: 'Soul Flame', obsidian: 'Obsidian Blade', pitchfork: 'Devil Fork', magmacore: 'Magma Core', hellskull: 'Burning Skull',
+  cloudbucket: 'Cloud Bucket', waterbucket: 'Water Bucket', cloud: 'Cloud', halo: 'Halo', harp: 'Golden Harp', angelwing: 'Angel Wing', skyspear: 'Sky Spear', sunshard: 'Sun Shard', skypearl: 'Sky Pearl', starlight: 'Starlight Orb',
+  infernoblade: 'Inferno Blade', seraphbow: 'Seraph Bow',
   ember: 'Titan Ember', fang: 'Wyrm Fang', ankh: 'Pharaoh Ankh', spore: 'Spore Heart', roc: 'Roc Feather', colossus: 'Colossus Core', phylactery: 'Phylactery', tentacle: 'Kraken Tentacle', abyss: 'Abyss Shard', heartwood: 'Heartwood', voidcore: 'Void Core' };
 const ADJ = { sword: 'Bladed', bow: "Archer's", wand: 'Magic', stick: 'Wooden', rock: 'Heavy', bomb: 'Explosive', fire: 'Flaming', ice: 'Frost', spark: 'Thunder', boots: 'Swift', rocket: 'Rocket', feather: 'Winged', shield: 'Guardian', potion: 'Vampiric', magnet: 'Seeking', clover: 'Lucky',
   axe: 'Cleaving', hammer: 'Crushing', trident: 'Piercing', boomerang: 'Returning', poison: 'Toxic', wind: 'Gusty', star: 'Starry', heart: 'Hearty', moon: 'Lunar', hourglass: 'Hasty',
   knife: 'Quick', gem: 'Jeweled', eye: 'Cursed', skull: 'Reaping', coins: 'Golden', bell: 'Ringing', web: 'Sticky', mirror: 'Mirrored', meat: 'Feasting', horn: 'Fearsome',
   spring: 'Bouncy', glider: 'Gliding', fin: 'Aquatic', skate: 'Rolling', ufo: 'Hovering', helmet: 'Helmeted', chestplate: 'Armored', leggings: 'Plated', bag: 'Roomy', pickaxe: 'Digging', void: 'Void', sun: 'Solar', chain: 'Chained', echo: 'Echoing', ghost: 'Haunted', anchor: 'Anchored', lantern: 'Glowing', battery: 'Charged', thorns: 'Thorny', crown: 'Royal',
   meteor: 'Meteoric', blink: 'Warping', dragon: 'Draconic', nova: 'Glacial', rainbow: 'Prismatic', storm: 'Stormcalling',
+  lavabucket: 'Lava-filled', hellbrick: 'Brick-forged', hellfire: 'Hellfire', demonhorn: 'Demonic', brimstone: 'Brimstone', soulflame: 'Soul-burning', obsidian: 'Obsidian', pitchfork: 'Devilish', magmacore: 'Magma', hellskull: 'Hellish',
+  cloudbucket: 'Stormy', waterbucket: 'Watery', cloud: 'Cloudy', halo: 'Holy', harp: 'Heavenly', angelwing: 'Angelic', skyspear: 'Celestial', sunshard: 'Radiant', skypearl: 'Pearly', starlight: 'Starlit',
+  infernoblade: 'Infernal', seraphbow: 'Seraphic',
   ember: 'Molten', fang: 'Wyrmbane', ankh: 'Pharaonic', spore: 'Sporeborn', roc: 'Tempest', colossus: 'Colossal', phylactery: 'Lich-bound', tentacle: 'Abyssal', abyss: 'Voidforged', heartwood: 'Ancient', voidcore: 'Void-bound' };
-const CORE_ORDER = ['ember', 'fang', 'ankh', 'spore', 'roc', 'colossus', 'phylactery', 'tentacle', 'abyss', 'heartwood', 'meteor', 'blink', 'dragon', 'nova', 'rainbow', 'storm','bomb', 'rock', 'fire', 'ice', 'spark', 'poison', 'wind', 'web', 'star', 'bell', 'boots', 'rocket', 'feather', 'ufo', 'glider', 'spring', 'skate', 'fin', 'heart', 'shield', 'mirror', 'potion', 'meat', 'magnet', 'clover', 'gem', 'eye', 'skull', 'horn', 'coins', 'moon', 'hourglass', 'pickaxe', 'void', 'sun', 'chain', 'echo', 'ghost', 'anchor', 'lantern', 'battery', 'thorns', 'crown', 'bag', 'voidcore', 'stick'];
-const MELEE_W = ['sword', 'axe', 'hammer', 'trident', 'knife', 'ember', 'fang', 'colossus', 'tentacle', 'heartwood'], SHOOT_W = ['bow', 'wand', 'boomerang', 'ankh', 'spore', 'roc', 'phylactery', 'abyss'];
+const CORE_ORDER = ['infernoblade', 'seraphbow', 'obsidian', 'pitchfork', 'skyspear', 'harp', 'starlight', 'lavabucket', 'waterbucket', 'cloudbucket', 'hellbrick', 'hellfire', 'demonhorn', 'brimstone', 'soulflame', 'magmacore', 'hellskull', 'cloud', 'halo', 'angelwing', 'sunshard', 'skypearl', 'ember', 'fang', 'ankh', 'spore', 'roc', 'colossus', 'phylactery', 'tentacle', 'abyss', 'heartwood', 'meteor', 'blink', 'dragon', 'nova', 'rainbow', 'storm','bomb', 'rock', 'fire', 'ice', 'spark', 'poison', 'wind', 'web', 'star', 'bell', 'boots', 'rocket', 'feather', 'ufo', 'glider', 'spring', 'skate', 'fin', 'heart', 'shield', 'mirror', 'potion', 'meat', 'magnet', 'clover', 'gem', 'eye', 'skull', 'horn', 'coins', 'moon', 'hourglass', 'pickaxe', 'void', 'sun', 'chain', 'echo', 'ghost', 'anchor', 'lantern', 'battery', 'thorns', 'crown', 'bag', 'voidcore', 'stick'];
+const MELEE_W = ['sword', 'axe', 'hammer', 'trident', 'knife', 'ember', 'fang', 'colossus', 'tentacle', 'heartwood', 'obsidian', 'pitchfork', 'skyspear', 'infernoblade'], SHOOT_W = ['bow', 'wand', 'boomerang', 'ankh', 'spore', 'roc', 'phylactery', 'abyss', 'harp', 'starlight', 'seraphbow'];
 const TIERS = [null, ['Common', '#9aa5b1'], ['Uncommon', '#4caf50'], ['Rare', '#2f8fff'], ['Epic', '#a64dff'], ['Legendary', '#ff9800'], ['Mythic', '#ff3d7f'], ['Divine', '#40ffe0'], ['Cosmic', '#ffffff']];
 const tierOf = t => TIERS[Math.min(t, 8)];
 const ARMOR_SLOTS = ['head', 'chest', 'legs'], EQUIP_SLOTS = ['head', 'chest', 'legs', 'bag'], SLOT_KEY = { head: 'helmet', chest: 'chestplate', legs: 'leggings', bag: 'bag' }, SLOT_NAME = { head: 'Helmet', chest: 'Chestplate', legs: 'Leggings', bag: 'Bag' };
@@ -949,6 +1088,30 @@ const ART = {
   tentacle: [['M20 92C10 60 30 40 50 46C70 52 84 36 80 16', null, '#c04a7a', 16], ['M20 92C10 60 30 40 50 46C70 52 84 36 80 16', null, '#e070a0', 5], [pC(24, 74, 4), '#ffd0e0'], [pC(32, 54, 4), '#ffd0e0'], [pC(50, 50, 4), '#ffd0e0'], [pC(68, 46, 3.5), '#ffd0e0'], [pC(78, 30, 3), '#ffd0e0']],
   abyss: [['M50 4L74 40L60 96L40 96L26 40Z', '#1a0a2a'], ['M50 4L60 40L50 96L40 40Z', '#3a1a5a'], ['M50 4L74 40L60 96M50 4L26 40L40 96', null, '#b06aff', 2.5], [pC(50, 44, 7), '#e0c0ff']],
   heartwood: [['M50 92C10 64 8 36 26 22C40 12 48 22 50 32C52 22 60 12 74 22C92 36 90 64 50 92Z', '#7a4a2a'], ['M50 80C26 62 24 44 34 36M50 80C74 62 76 44 66 36', null, '#5a3218', 3], [pC(50, 52, 8), '#ffc040'], ['M50 30C46 14 58 6 70 8C68 20 60 28 50 30Z', '#4caf50'], ['M48 30C40 20 28 20 22 26C30 34 40 34 48 30Z', '#3c9a40']],
+  // underworld
+  lavabucket: [['M22 30L78 30L70 92L30 92Z', '#7a7f89'], [pE(50, 30, 28, 8), '#ff5a10'], [pE(46, 29, 12, 3), '#ffc040'], ['M22 30Q50 -8 78 30', null, '#4a4f59', 3], ['M40 38L40 58', null, '#ff7a20', 6]],
+  hellbrick: [['M8 28L92 28L92 76L8 76Z', '#8a2a1a'], ['M8 52L92 52M36 28L36 52M70 28L70 52M22 52L22 76M56 52L56 76', null, '#3a0a06', 3], ['M8 28L92 28L92 34L8 34Z', '#b8442a']],
+  hellfire: [['M50 4C74 28 88 46 84 66C80 90 62 96 50 96C32 96 16 88 16 64C16 46 32 38 36 20C44 34 46 40 50 46C55 30 53 18 50 4Z', '#a01008'], ['M50 40C66 54 72 66 68 80C62 92 38 92 34 80C30 68 42 58 50 40Z', '#ff5a10'], ['M50 62C58 70 58 80 50 86C42 80 42 70 50 62Z', '#ffd060']],
+  demonhorn: [['M22 92C18 52 38 20 84 8C62 30 52 58 50 92Z', '#4a1a1a'], ['M28 74L50 70M30 56L54 50M38 40L62 32', null, '#2a0808', 3], [pE(36, 92, 14, 4), '#2a0808']],
+  brimstone: [['M14 70L24 40L48 24L74 32L86 60L72 84L36 86Z', '#c8a830'], ['M30 48L46 40L58 46', null, '#8a7010', 3], ['M54 22C62 10 70 14 66 2C80 14 78 30 66 34Z', '#ff5a10'], [pC(40, 62, 6), '#8a7010']],
+  soulflame: [['M50 4C72 28 86 46 82 66C78 88 62 94 50 94C34 94 18 86 18 64C18 48 32 40 36 24C44 36 46 42 50 46C55 32 53 20 50 4Z', '#2a7ad0'], ['M50 46C62 58 68 68 64 80C60 90 40 90 36 80C34 70 44 62 50 46Z', '#bff0ff'], [pC(44, 70, 3), '#1a2a5a'], [pC(56, 70, 3), '#1a2a5a']],
+  obsidian: [['M82 10L90 18L44 72L32 60Z', '#1a1020'], ['M82 10L90 18L38 66Z', '#4a2a6a'], ['M24 58L46 80L51 75L29 53Z', '#6a1a1a'], ['M35 71L22 84L26 88L39 75Z', '#2a1010'], [pC(20, 88, 5), '#ff4010']],
+  pitchfork: [['M46 30L54 30L54 96L46 96Z', '#5a1a14'], ['M22 26L78 26L78 36L22 36Z', '#2a0a08'], ['M22 36L22 12L30 12L30 36Z', '#2a0a08'], ['M70 36L70 12L78 12L78 36Z', '#2a0a08'], ['M46 28L46 6L54 6L54 28Z', '#2a0a08'], ['M20 13L26 0L32 13Z', '#ff3a10'], ['M68 13L74 0L80 13Z', '#ff3a10'], ['M44 7L50 -6L56 7Z', '#ff3a10']],
+  magmacore: [[pC(50, 50, 40), '#ff6a10'], ['M24 36L42 48L36 66M58 26L56 46L76 56M44 48L58 62L54 80', null, '#5a1a06', 5], [pC(38, 36, 8), '#ffd060']],
+  hellskull: [['M50 12C76 12 86 32 84 50C82 62 74 66 70 68L70 84L30 84L30 68C26 66 18 62 16 50C14 32 24 12 50 12Z', '#c03020'], [pC(36, 46, 10), '#ffd040'], [pC(64, 46, 10), '#ffd040'], ['M45 64L55 64L50 56Z', '#2a0808'], ['M30 14C34 2 44 6 42 -2C54 6 52 14 46 14Z', '#ff7a20'], ['M60 14C64 4 72 6 72 0C80 10 76 16 66 16Z', '#ff7a20']],
+  // skylands
+  cloudbucket: [['M22 40L78 40L70 92L30 92Z', '#c8d0da'], [pE(50, 40, 28, 8), '#e8f2ff'], [pC(36, 32, 11), '#ffffff'], [pC(52, 26, 13), '#ffffff'], [pC(66, 33, 10), '#ffffff'], ['M44 60L38 74L46 74L40 88', null, '#fff26a', 3]],
+  waterbucket: [['M22 30L78 30L70 92L30 92Z', '#9aa6b4'], [pE(50, 30, 28, 8), '#3a9ad9'], [pE(44, 29, 12, 3), '#bfe8ff'], ['M22 30Q50 -8 78 30', null, '#5a6a7a', 3], [pC(80, 56, 4), '#3a9ad9']],
+  cloud: [['M16 72C0 72 0 44 20 44C22 24 48 20 56 34C66 20 90 28 88 48C100 50 100 72 84 72Z', '#f4f8ff'], ['M26 60C40 66 64 66 80 58', null, '#c8d8ec', 3]],
+  halo: [[pE(50, 50, 40, 14), null, '#ffd040', 9], [pE(50, 50, 40, 14), null, '#fff6c0', 3], [pC(20, 40, 3), '#ffffff'], [pC(80, 58, 3), '#ffffff']],
+  harp: [['M24 92L24 20C24 8 40 4 52 12C68 22 78 20 84 14L76 92Z', null, '#ffcf40', 8], ['M34 26L34 90M44 22L44 90M54 22L54 90M64 22L64 90', null, '#fff6d0', 2], [pC(24, 92, 6), '#ffcf40']],
+  angelwing: [['M14 86C20 40 50 12 90 8C80 26 76 36 84 44C70 46 66 56 76 64C60 64 54 72 62 82C44 80 30 82 14 86Z', '#ffffff'], ['M22 80C34 60 52 40 82 16', null, '#d8e0f0', 3], ['M40 70C50 62 62 56 72 50', null, '#d8e0f0', 2]],
+  skyspear: [['M18 90L74 22L80 28L24 96Z', '#f4f0e6'], ['M72 8L94 4L88 28L76 30Z', '#ffcf40'], ['M66 34L56 24M60 40L50 30', null, '#ffffff', 4], [pC(20, 94, 5), '#ffcf40']],
+  sunshard: [['M50 4L68 40L50 96L32 40Z', '#ffe040'], ['M50 4L58 40L50 96Z', '#fff6b0'], [pStar(50, 40, 14, .4, 4), '#ffffff']],
+  skypearl: [['M10 70C10 50 30 46 50 46C70 46 90 50 90 70C70 82 30 82 10 70Z', '#f0c8d8'], [pC(50, 44, 22), '#f8f4ff'], [pC(42, 36, 7), '#ffffff']],
+  starlight: [[pC(50, 50, 40), '#2a3a7a'], [pStar(50, 52, 30), '#fff6c0'], [pC(50, 52, 9), '#ffffff'], [pC(20, 20, 3), '#ffffff'], [pC(82, 26, 2.5), '#ffffff'], [pC(78, 82, 3), '#ffffff']],
+  infernoblade: [['M84 6L94 16L44 74L28 58Z', '#6a1010'], ['M84 6L94 16L40 70Z', '#ff4a10'], ['M70 24L80 34M58 38L68 48M46 52L56 62', null, '#ffc040', 3], ['M20 54L46 80L52 74L26 48Z', '#2a2a2a'], ['M33 69L18 84L22 88L37 73Z', '#1a0a0a'], [pC(16, 88, 6), '#ff3010']],
+  seraphbow: [['M30 8Q98 50 30 92', null, '#fff6e0', 9], ['M30 8L30 92', null, '#ffd040', 2.5], ['M30 8C10 2 4 16 12 24C4 26 8 36 18 32', null, '#ffffff', 4], ['M30 92C10 98 4 84 12 76C4 74 8 64 18 68', null, '#ffffff', 4], [pC(64, 50, 6), '#ffd040']],
   voidcore: [[pC(50, 50, 42), '#1a0630'], ['M50 14C72 14 86 30 82 50M50 86C28 86 14 70 18 50', null, '#b06aff', 5], ['M30 26C44 34 56 34 70 26M30 74C44 66 56 66 70 74', null, '#7a3ad0', 3], [pC(50, 50, 14), '#e8c8ff'], [pC(50, 50, 6), '#ffffff']],
 };
 const artTexts = {}; // cached small canvases per key
@@ -1071,14 +1234,14 @@ function itemStats(it) {
   const starOnly = !!t.star && !shooter && !thrower;
   const ranged = shooter > 0 || thrower || starOnly;
   let shots = 0;
-  if (ranged) shots = Math.min(9, starOnly ? t.star : (shooter >= 4 ? 5 : shooter >= 2 ? 3 : 1) + (t.star || 0));
+  if (ranged) shots = Math.min(11, starOnly ? t.star : (shooter >= 4 ? 5 : shooter >= 2 ? 3 : 1) + (t.star || 0) + 3 * (t.starlight || 0) + 2 * (t.seraphbow || 0));
   const ammo = !ranged ? null : starOnly ? 'star' : t.stick ? 'stick' : t.rock ? 'rock' : t.bomb ? 'bomb' : t.bow ? 'arrow' : (t.boomerang && !t.wand) ? 'boomerang' : 'orb';
   const night = isNight ? 1 + .6 * (t.moon || 0) : 1;
   const dmg = it.power * night * (1 + .25 * (t.gem || 0));
   const pdmg = dmg * (melee ? .6 : .85) / (shots > 1 ? 1 + shots * .2 : 1);
   let cd = melee && ranged ? .55 : melee ? .42 : .5; if (t.hammer) cd += .15; cd *= Math.pow(.75, t.hourglass || 0) * Math.pow(.7, t.knife || 0);
   return { melee, ranged, punch: !melee && !ranged, shots, ammo, dmg: melee ? dmg : 3, pdmg, cd,
-    reach: 2.3 + (t.sword ? .7 : 0) + (t.axe ? .4 : 0) + (t.trident ? 1.6 : 0) + (t.tentacle ? 1.8 : 0) + (t.colossus ? .5 : 0) + (t.ember ? .4 : 0) + Math.min(it.tier, 6) * .12, arc: (t.axe || t.colossus) ? -.35 : .3 };
+    reach: 2.3 + (t.sword ? .7 : 0) + (t.axe ? .4 : 0) + (t.trident ? 1.6 : 0) + (t.tentacle ? 1.8 : 0) + (t.colossus ? .5 : 0) + (t.ember ? .4 : 0) + (t.skyspear ? 2.2 : 0) + (t.pitchfork ? 1.6 : 0) + (t.infernoblade ? .7 : 0) + (t.obsidian ? .5 : 0) + Math.min(it.tier, 6) * .12, arc: (t.axe || t.colossus) ? -.35 : .3 };
 }
 const AMMO_NAME = { stick: 'sticks', rock: 'boulders', bomb: 'bombs', arrow: 'arrows', orb: 'magic orbs', star: 'stars', boomerang: 'boomerangs' };
 function describe(it) {
@@ -1088,6 +1251,7 @@ function describe(it) {
   if (t.bag && t.voidcore) L.push('<b style="color:#c890ff">🟣 VOID-BOUND: when you die you keep this bag AND every item inside its slots</b>');
   else if (t.bag) L.push('🟣 Merge a Void Core onto it so it survives death');
   if (isVC(it)) L.push('<b style="color:#c890ff">🟣 Drag onto a Bag to make it void-bound</b> — that bag and everything inside it survive death', "❌ Can't be merged with anything except a bag");
+  { const rl = realmOf(t); if (rl) L.push(rl === 'hell' ? '<b style="color:#ff6a30">🔥 Underworld item — only found deep below the ground</b>' : '<b style="color:#bfe8ff">☁️ Skylands item — only found high above the clouds</b>'); }
   if (isBossT(t)) L.push(`<b style="color:#ff7a5a">☠️ Boss item — only dropped by the ${BOSS_KEYS.filter(k => t[k]).map(k => BOSSES[BASE[k].boss].name).join(' & ')}</b>`);
   if (aSlots.length) { const df = armorDef(it);
     L.push(`<b style="color:#8fd0ff">🛡️ Armour: +${df} defence (${Math.round(df / (df + 50) * 100)}% less damage alone)</b>`);
@@ -1157,6 +1321,28 @@ function describe(it) {
   if (t.tentacle) L.push(`🐙 Very long reach · hits grab ${2 + t.tentacle} nearby enemies and slam them together · swim much faster`);
   if (t.abyss) L.push(`🌑 Every 5th hit tears open a black hole that drags enemies in and crushes them`);
   if (t.heartwood) L.push(`🌳 +${60 * t.heartwood} max HP, regenerate ${3 * t.heartwood} HP/s · hits trap enemies in roots`);
+  if (t.lavabucket) L.push(`🪣 Hits splash a pool of lava under enemies · you can walk through lava`);
+  if (t.hellbrick) L.push(`🧱 +${30 * t.hellbrick}% damage, hits stun · take ${Math.round((1 - Math.pow(.85, t.hellbrick)) * 100)}% less damage`);
+  if (t.hellfire) L.push(`🔥 Triple-strength burning · burning enemies explode when they die`);
+  if (t.demonhorn) L.push(`😈 +${40 * t.demonhorn}% damage and +${20 * t.demonhorn}% critical hit chance`);
+  if (t.brimstone) L.push(`🌋 35% chance each hit blasts a fiery explosion`);
+  if (t.soulflame) L.push(`💠 Kills heal 10% HP and give a soul: +5% damage per soul (up to 10) for 10s`);
+  if (t.obsidian) L.push(`🗡️ Hits also cut ${2 * t.obsidian}% of the enemy's MAX health — great against bosses`);
+  if (t.pitchfork) L.push(`🔱 Long reach, sets enemies on fire and flings them far`);
+  if (t.magmacore) L.push(`🟠 Big burning aura around you · immune to fire & lava`);
+  if (t.hellskull) L.push(`💀 Every kill launches a burning skull that explodes on another enemy`);
+  if (t.cloudbucket) L.push(`🪣 Hits leave a freezing rain cloud that slows and hurts enemies`);
+  if (t.waterbucket) L.push(`🪣 Hits heal you ${4 * t.waterbucket} HP and wash nearby enemies away · walk on water`);
+  if (t.cloud) L.push(`☁️ +${2 * t.cloud} extra jumps and hold jump to float down slowly`);
+  if (t.halo) L.push(`😇 Regenerate ${4 * t.halo} HP/s · 20% chance to block a hit completely`);
+  if (t.harp) L.push(`🎵 Every hit plays a note that jumps to 3 more enemies and heals you`);
+  if (t.angelwing) L.push(`🪽 Hold jump in the air to FLY upward (${4 * t.angelwing}s)`);
+  if (t.skyspear) L.push(`🔱 Huge reach · every hit calls down a pillar of holy light`);
+  if (t.sunshard) L.push(`🔆 +30% critical chance, and crits deal 3× damage`);
+  if (t.skypearl) L.push(`🫧 +50% coins, items sell for +100%, +30% damage to flying enemies`);
+  if (t.starlight) L.push(`🌟 +3 homing star shots`);
+  if (t.infernoblade) L.push(`⚔️ Everything you hit burns and a wave of fire hits enemies around it · lava immune`);
+  if (t.seraphbow) L.push(`🏹 +2 holy arrows that fly through every enemy and heal you`);
   for (const cb of combosOf(t)) L.push(`<b style="color:#7affd0">🌟 COMBO: ${cb.name}</b> — ${cb.desc}`);
   if ((it.tier >= 7 || isRareT(t)) && t.bomb) L.push('<b style="color:#ffb060">💥 Blasts real craters into the ground</b>');
   for (const k of RARE_KEYS) if (t[k]) L.push(`<b style="color:#ff9cff">🖱️ Right-click${isTouch ? ' / ✨ button' : ' / R'}: ${BASE[k].e} ${ABIL[k].name}</b> — ${ABIL[k].desc}${t[k] > 1 ? ` (x${t[k]} power)` : ''} · ${ABIL[k].cd}s cooldown`);
@@ -1204,11 +1390,12 @@ function setSlot(r, it) { if (isArmorRef(r)) armor[r] = it; else inv[r] = it; }
 const slotEl = r => isArmorRef(r) ? armorEls[r] : slotEls[r];
 const armorDefTotal = () => ARMOR_SLOTS.reduce((a, s) => a + (armor[s] ? armorDef(armor[s]) : 0), 0);
 function infoHTML(it, worn) { const [tn, tc] = tierOf(it.tier);
-  return `<div class="nm" style="color:${tc}">${worn ? '👕 ' : ''}${it.name}</div><div style="font-size:11px;opacity:.75">${isBossT(it.traits) ? '<b style="color:#ff7a5a">☠️ BOSS ITEM</b> · ' : ''}${isRareT(it.traits) ? '<b style="color:#ff9cff">🌟 SUPER RARE</b> · ' : ''}${tn} · Power ${it.power} · Sells for 🪙 ${sellPrice(it)}</div>` + describe(it).map(l => `<div class="ln">${l}</div>`).join(''); }
+  const rl = realmOf(it.traits);
+  return `<div class="nm" style="color:${tc}">${worn ? '👕 ' : ''}${it.name}</div><div style="font-size:11px;opacity:.75">${rl === 'hell' ? '<b style="color:#ff6a30">🔥 UNDERWORLD</b> · ' : rl === 'sky' ? '<b style="color:#bfe8ff">☁️ SKYLANDS</b> · ' : ''}${isBossT(it.traits) ? '<b style="color:#ff7a5a">☠️ BOSS ITEM</b> · ' : ''}${isRareT(it.traits) ? '<b style="color:#ff9cff">🌟 SUPER RARE</b> · ' : ''}${tn} · Power ${it.power} · Sells for 🪙 ${sellPrice(it)}</div>` + describe(it).map(l => `<div class="ln">${l}</div>`).join(''); }
 function showInfo(it, worn) { infoEl.innerHTML = infoHTML(it, worn); infoEl.style.display = 'block'; }
 function hideInfo() { infoEl.style.display = 'none'; }
 function equipAuto(it) { const s = EQUIP_SLOTS.find(sl => fitsSlot(it, sl) && !armor[sl]); if (!s) return false; armor[s] = it; discover(it); renderInv(); return s; }
-function sellPrice(it) { return Math.max(3, Math.round((10 * ingredients(it) + it.power * .6) * (1 + .1 * (it.tier - 1)) * (isRareT(it.traits) ? 3 : 1) * (isBossT(it.traits) ? 5 : 1) * (1 + .5 * (curT().crown || 0)))); }
+function sellPrice(it) { return Math.max(3, Math.round((10 * ingredients(it) + it.power * .6) * (1 + .1 * (it.tier - 1)) * (isRareT(it.traits) ? 3 : 1) * (isBossT(it.traits) ? 5 : 1) * (realmOf(it.traits) ? 3 : 1) * (1 + .5 * (curT().crown || 0) + (curT().skypearl || 0)))); }
 function sellItem(i) {
   const it = getSlot(i); if (!it) return; const price = sellPrice(it);
   setSlot(i, null); renderInv(); addCoins(price);
@@ -1483,7 +1670,7 @@ function updateLoot(dt, T) {
   for (let i = loot.length - 1; i >= 0; i--) { const l = loot[i]; l.t += dt; l.delay -= dt;
     const gy = groundAt(l.x, l.z, l.g.position.y);
     if (!l.ground) { l.vy -= 18 * dt; l.x += l.vx * dt; l.z += l.vz * dt; l.g.position.y += l.vy * dt; if (l.g.position.y <= gy + 1 && l.vy < 0) { l.ground = true; } }
-    else l.g.position.y = Math.max(gy, WATER) + .55 + Math.sin(l.t * 2.5) * .12;
+    else l.g.position.y = wl(gy) + .55 + Math.sin(l.t * 2.5) * .12;
     l.g.position.x = l.x; l.g.position.z = l.z;
     const dx = player.pos.x - l.x, dz = player.pos.z - l.z, d = Math.hypot(dx, dz);
     if (l.delay > 0 || !alive) continue;
@@ -1511,7 +1698,7 @@ function spawnCoins(total, x, y, z) {
 function updateCoins(dt, T) {
   const P = player.pos, mag = T.magnet ? 7 + 3 * T.magnet : 3.5;
   for (let i = coinDrops.length - 1; i >= 0; i--) { const c = coinDrops[i], p = c.m.position; c.t += dt;
-    const gy = Math.max(groundAt(p.x, p.z, p.y), WATER) + .35;
+    const gy = wl(groundAt(p.x, p.z, p.y)) + .35;
     if (!c.ground) { c.vy -= 22 * dt; p.x += c.vx * dt; p.z += c.vz * dt; p.y += c.vy * dt; if (p.y <= gy && c.vy < 0) { p.y = gy; c.ground = true; } }
     else p.y = gy + Math.sin(c.t * 4) * .06;
     c.m.rotation.y += dt * 4;
@@ -1589,6 +1776,10 @@ function buildItemModel(it) {
   else if (mainMelee === 'colossus') { mesh(C(.06, .07, 1, 8), 0x5a5650, { map: TEX.rock }, g, 0, .4, 0); mesh(B(.52, .42, .42), 0x8a8680, { map: TEX.rock, bumpMap: TEX.rock, bumpScale: .03 }, g, 0, 1.02, 0); mesh(B(.14, .14, .44), 0x60b0ff, { emissive: 0x3080ff, emissiveIntensity: 1.2 }, g, 0, 1.02, 0, false); L = 1.25; }
   else if (mainMelee === 'tentacle') { for (let i = 0; i < 9; i++) mesh(new THREE.SphereGeometry(.1 - i * .008, 10, 8), i % 2 ? 0xc04a7a : 0xa83a68, { roughness: .35 }, g, Math.sin(i * .55) * .13, i * .19, 0); L = 1.7; }
   else if (mainMelee === 'heartwood') { mesh(C(.06, .1, 1.2, 8), 0x6a4a2a, { map: TEX.bark, bumpMap: TEX.bark, bumpScale: .02 }, g, 0, .5, 0); mesh(lumpy(new THREE.SphereGeometry(.24, 12, 9), .06, 5, 4), 0x3a7a2a, { map: TEX.leaf }, g, 0, 1.18, 0); mesh(new THREE.SphereGeometry(.09, 8, 6), 0xffc040, { emissive: 0xffa000, emissiveIntensity: .9 }, g, 0, .98, .1, false); L = 1.35; }
+  else if (mainMelee === 'obsidian') { mesh(B(.15, 1.15, .035), 0x1a1020, { metalness: .7, roughness: .05, emissive: 0x3a1050, emissiveIntensity: .4 }, g, 0, .78, 0); mesh(B(.48, .08, .12), 0x6a1a1a, null, g, 0, .18, 0); mesh(C(.04, .04, .3, 8), 0x2a1010, null, g, 0, 0, 0); L = 1.35; }
+  else if (mainMelee === 'pitchfork') { mesh(C(.035, .04, 1.7, 8), 0x5a1a14, { map: TEX.wood }, g, 0, .7, 0); mesh(B(.36, .05, .05), 0x2a0a08, { metalness: .8, roughness: .3 }, g, 0, 1.55, 0); for (const px of [-.16, 0, .16]) mesh(new THREE.ConeGeometry(.04, .32, 6), 0x3a0a08, { metalness: .8, roughness: .3, emissive: 0xff2a00, emissiveIntensity: .4 }, g, px, 1.75, 0); L = 1.9; }
+  else if (mainMelee === 'skyspear') { mesh(C(.03, .035, 1.9, 8), 0xf4f0e6, { metalness: .3, roughness: .3 }, g, 0, .8, 0); mesh(new THREE.ConeGeometry(.08, .4, 8), 0xffcf40, { metalness: .9, roughness: .2 }, g, 0, 1.95, 0); for (const s of [-1, 1]) mesh(B(.22, .06, .01), 0xffffff, null, g, s * .12, 1.6, 0).rotation.z = s * .5; L = 2.1; }
+  else if (mainMelee === 'infernoblade') { mesh(B(.2, 1.35, .05), 0x6a1010, { metalness: .6, roughness: .25, emissive: 0xff3a00, emissiveIntensity: .7 }, g, 0, .86, 0); mesh(B(.55, .1, .14), 0x2a2a2a, { metalness: .8 }, g, 0, .18, 0); mesh(C(.045, .045, .32, 8), 0x1a0a0a, null, g, 0, 0, 0); const fl = glowSprite(0xff5010, 1.2, .7); fl.position.y = 1; g.add(fl); L = 1.55; }
   else if (mainMelee === 'stick') { mesh(C(.05, .07, 1.1), 0x8b5a2b, emis, g, 0, .45, 0); mesh(C(.03, .03, .3, 5), 0x8b5a2b, null, g, .1, .7, 0).rotation.z = -.6; L = 1; }
   // every melee weapon in the fusion adds its head
   if (t.axe) { const hy = mainMelee === 'axe' ? .88 : L * .62; mesh(B(.4, .36, .05), metal, metalOpt, g, .22, hy, 0); mesh(B(.06, .44, .06), metal, metalOpt, g, .42, hy, 0); }
@@ -1603,13 +1794,16 @@ function buildItemModel(it) {
     if (!mainMelee) L = .7; }
   if (t.wand) { const off = (mainMelee || t.bow) ? .25 : 0; mesh(C(.03, .04, .75), 0x4a2a6a, null, g, off, .35, 0);
     mesh(new THREE.SphereGeometry(.1, 10, 8), ec || 0xc58cff, { emissive: ec || 0xc58cff, emissiveIntensity: .8 }, g, off, .76, 0, false); if (!mainMelee && !t.bow) L = .8; }
-  const bossSh = ['ankh', 'spore', 'roc', 'phylactery', 'abyss'].find(k => t[k]);
-  if (bossSh) { const lone = !mainMelee && !t.bow && !t.wand, off = lone ? 0 : -.24, hc = { ankh: 0xffd040, spore: 0x9aff6a, roc: 0xfff26a, phylactery: 0x6aff9a, abyss: 0xb06aff }[bossSh];
+  const bossSh = ['ankh', 'spore', 'roc', 'phylactery', 'abyss', 'harp', 'starlight', 'seraphbow'].find(k => t[k]);
+  if (bossSh) { const lone = !mainMelee && !t.bow && !t.wand, off = lone ? 0 : -.24, hc = { ankh: 0xffd040, spore: 0x9aff6a, roc: 0xfff26a, phylactery: 0x6aff9a, abyss: 0xb06aff, harp: 0xffd040, starlight: 0xfff6c0, seraphbow: 0xfff0a0 }[bossSh];
     mesh(C(.03, .04, .95, 8), 0x3a2a1a, { map: TEX.wood }, g, off, .42, 0);
     if (bossSh === 'ankh') { const gold = { metalness: .9, roughness: .25 }; mesh(new THREE.TorusGeometry(.1, .03, 8, 16), 0xffd040, gold, g, off, 1.05, 0); mesh(B(.3, .05, .05), 0xffd040, gold, g, off, .9, 0); }
     else if (bossSh === 'spore') { const cp = mesh(new THREE.SphereGeometry(.2, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), 0x8a3a8a, null, g, off, .92, 0); for (let i = 0; i < 4; i++) mesh(new THREE.SphereGeometry(.035, 6, 5), 0x7affa0, { emissive: 0x40ff80, emissiveIntensity: 1 }, g, off + Math.cos(i * 1.6) * .11, 1.03, Math.sin(i * 1.6) * .11, false); }
     else if (bossSh === 'roc') { for (let i = -1; i <= 1; i++) mesh(B(.06, .4, .015), 0xd8c8a8, null, g, off + i * .07, 1.05, 0).rotation.z = i * .35; }
     else if (bossSh === 'phylactery') { mesh(new THREE.SphereGeometry(.14, 12, 10), 0x2a3a2a, { metalness: .4, roughness: .35 }, g, off, 1, 0); mesh(new THREE.SphereGeometry(.07, 8, 6), 0x6aff9a, { emissive: 0x30ff70, emissiveIntensity: 1.2 }, g, off, 1, .1, false); }
+    else if (bossSh === 'harp') { const hp = mesh(new THREE.TorusGeometry(.18, .025, 8, 20, Math.PI * 1.3), 0xffcf40, { metalness: .9, roughness: .25 }, g, off, 1.05, 0); hp.rotation.z = -.4; for (let i = -1; i <= 1; i++) mesh(C(.004, .004, .26, 4), 0xffffff, null, g, off + i * .06, 1.02, 0); }
+    else if (bossSh === 'starlight') { mesh(new THREE.OctahedronGeometry(.15), 0xfff6c0, { emissive: 0xffe080, emissiveIntensity: 1 }, g, off, 1.05, 0, false); }
+    else if (bossSh === 'seraphbow') { const sb = mesh(new THREE.TorusGeometry(.32, .03, 6, 18, Math.PI), 0xfff6e0, { metalness: .6, roughness: .25 }, g, off, .9, 0); sb.rotation.z = -Math.PI / 2; for (const s of [-1, 1]) mesh(B(.2, .06, .01), 0xffffff, null, g, off - .12, .9 + s * .32, 0); }
     else { const sh = mesh(new THREE.OctahedronGeometry(.16), 0x1a0a2a, { metalness: .6, roughness: .15 }, g, off, 1.05, 0); sh.scale.y = 1.8; }
     const hg = glowSprite(hc, .8, .8); hg.position.set(off, 1.02, 0); g.add(hg); if (lone) L = 1.1; }
   if (t.boomerang) { const b = new THREE.Group(); b.position.set((mainMelee || t.bow || t.wand) ? -.05 : 0, (mainMelee || t.bow || t.wand) ? .1 : .3, (mainMelee || t.bow || t.wand) ? -.15 : 0); g.add(b);
@@ -1672,6 +1866,8 @@ function hurtPlayer(d, src) {
   if (T.thorns && src && !src.dead && src.hp !== undefined) applyHit(src, 10 * T.thorns + heldPower() * .3, {}, null, { splash: true, noExplode: true });
   if (T.shield) d *= Math.pow(.7, T.shield);
   if (T.colossus) d *= Math.pow(.7, T.colossus);
+  if (T.hellbrick) d *= Math.pow(.85, T.hellbrick);
+  if (T.halo && rand() < .2) { player.invuln = .3; dmgText(eyePos().addScaledVector(lookDir(), 2), '😇 BLOCKED', '#fff0a0', 22); sfx(1600, .15, 'sine', .05, .8); return; }
   const def = armorDefTotal(); if (def) d *= 50 / (50 + def);
   if (player.hp - d <= 0 && T.heart && T.fire && !player.phoenixUsed) { // PHOENIX REBIRTH
     player.phoenixUsed = true; player.hp = player.max * .5; player.invuln = 2.5; const pc = player.pos.clone().add(new V3(0, 1, 0));
@@ -1679,7 +1875,7 @@ function hurtPlayer(d, src) {
     toast('🔥 <b style="color:#ff9a40">PHOENIX REBIRTH!</b> You rise from the ashes!', 3500);
     for (const o of monsters.slice()) if (!o.dead && Math.hypot(o.x - player.pos.x, o.z - player.pos.z) < 9) applyHit(o, heldPower() * 3, { fire: 2 }, new V3(o.x - player.pos.x, 0, o.z - player.pos.z).normalize(), { splash: true });
     return; }
-  player.hp -= d; player.invuln = .45; player.hurtT = 0;
+  player.hp -= d; player.invuln = (T.angelwing && T.halo) ? 1.5 : .45; player.hurtT = 0; // HEAVEN'S GATE
   dmgText(eyePos().addScaledVector(lookDir(), 2).add(new V3(0, -.3, 0)), '-' + Math.round(d), '#ff6b6b', 22);
   sfx(160, .18, 'sawtooth', .06, .5);
   const h = document.getElementById('hurt'); h.style.opacity = .8; setTimeout(() => h.style.opacity = 0, 150);
@@ -1700,8 +1896,9 @@ document.getElementById('respawnBtn').onclick = () => {
   if (vb) { armor.bag = vb; kept.forEach((it, k) => inv[10 + k] = it); }
   renderInv(); if (vb) setTimeout(() => toast(`🟣 Your <b>Void Bag</b> survived — ${kept.filter(Boolean).length} item${kept.filter(Boolean).length === 1 ? '' : 's'} kept`, 3500), 300);
   player.slowT = player.dotT = player.rootT = 0;
-  player.pos.set(0, getH(0, 0) + 1, 0); player.vy = 0; player.max = player.baseMax; player.hp = player.max; player.phoenixUsed = false; alive = true; spawnTimer = 20;
+  if (player.bed) player.pos.set(player.bed.x, player.bed.y, player.bed.z); else player.pos.set(0, getH(0, 0) + 1, 0); player.under = null; player.vy = 0; player.max = player.baseMax; player.hp = player.max; player.phoenixUsed = false; alive = true; spawnTimer = 20;
   document.getElementById('deadScreen').style.display = 'none';
+  if (player.bed) saveGame(); // dying still costs your items — the save remembers that
   if (!isTouch) tryLock();
 };
 // held item + everything worn: armour traits (fire, heart, boots, …) work while worn
@@ -1739,6 +1936,17 @@ const COMBOS = [
   { id: 'surfer', need: ['skate', 'fin'], name: 'Water Walker', desc: 'you glide across the surface of water instead of swimming' },
   { id: 'kingcatcher', need: ['crown', 'chain'], name: 'Kingcatcher', desc: 'hits on kings root them in place for 3s and deal double damage' },
   { id: 'midas', need: ['coins', 'gem'], name: 'Midas Touch', desc: 'every kill drops 50% extra coins on the ground' },
+  // underworld + skylands combos
+  { id: 'steam', need: ['lavabucket', 'waterbucket'], name: 'Steam Blast', desc: 'every hit bursts into scalding steam that hurts everything within 4m' },
+  { id: 'thunderhead', need: ['cloudbucket', 'spark'], name: 'Thunderhead', desc: 'hits call 3 lightning bolts down onto nearby enemies' },
+  { id: 'fallen', need: ['halo', 'demonhorn'], name: 'Fallen Angel', desc: '+80% damage and every kill heals 8% HP' },
+  { id: 'holyfire', need: ['skyspear', 'hellfire'], name: 'Holy Fire', desc: 'your pillars of light set everything they touch on fire' },
+  { id: 'forge', need: ['obsidian', 'lavabucket'], name: 'Obsidian Forge', desc: 'burning enemies take double damage' },
+  { id: 'heavensgate', need: ['angelwing', 'halo'], name: "Heaven's Gate", desc: 'after you get hit you are invincible for 1.5 seconds' },
+  { id: 'soulharvest', need: ['soulflame', 'skull'], name: 'Soul Harvest', desc: 'kills heal 25% HP and you can hold up to 20 souls' },
+  { id: 'starfall', need: ['starlight', 'cloud'], name: 'Starfall', desc: 'every 3rd volley rains 6 extra homing stars' },
+  { id: 'brimrain', need: ['brimstone', 'cloudbucket'], name: 'Brimstone Rain', desc: 'brimstone blasts rain 3 more fireballs around' },
+  { id: 'midnightsun', need: ['sunshard', 'moon'], name: 'Midnight Sun', desc: 'critical hits deal 5× damage' },
 ];
 const combosOf = T => COMBOS.filter(c => c.need.every(k => T[k]));
 const hasCombo = (T, id) => { const c = COMBOS.find(c => c.id === id); return c.need.every(k => T[k]); };
@@ -1761,26 +1969,33 @@ function updateHazards(dt) {
 }
 
 // ---- terrain you can destroy: lowers the heightmap and rebuilds those triangles
-function underCave(p) { return caveZones.some(Z => p.y < Z.floor + Z.ht + 1 && Math.hypot(p.x - Z.x, p.z - Z.z) < Z.r + 3); }
-function deformTerrain(x, z, rad, depth) {
+function underCave(p) { return caveZones.some(Z => !Z.realm && p.y < Z.floor + Z.ht + 1 && Math.hypot(p.x - Z.x, p.z - Z.z) < Z.r + 3); }
+const digLog = []; let H0 = null, hotHint = false, hellPending = false;
+function deformTerrain(x, z, rad, depth, quiet = false) {
+  if (!quiet) digLog.push([+x.toFixed(2), +z.toFixed(2), +rad.toFixed(2), +depth.toFixed(2)]);
   const geo = world.terrainGeo; if (!geo) return;
   const pos = geo.attributes.position.array, col = geo.attributes.color.array;
   const j0 = Math.max(0, Math.floor((x - rad + HALF) / STEP)), j1 = Math.min(SEG, Math.ceil((x + rad + HALF) / STEP));
   const i0 = Math.max(0, Math.floor((z - rad + HALF) / STEP)), i1 = Math.min(SEG, Math.ceil((z + rad + HALF) / STEP));
   for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) { const d = Math.hypot(-HALF + j * STEP - x, -HALF + i * STEP - z);
     if (d < rad) { const k = 1 - (d / rad) * (d / rad), vx = -HALF + j * STEP, vz = -HALF + i * STEP, idx = i * N + j; let lo = WATER - 14, punch = null;
-      for (const Z of caveZones) { const dc = Math.hypot(vx - Z.x, vz - Z.z); if (dc < Z.r + 4) { const ceil = Z.floor + Z.ht;
+      for (const Z of caveZones) { if (Z.realm) continue; const dc = Math.hypot(vx - Z.x, vz - Z.z); if (dc < Z.r + 4) { const ceil = Z.floor + Z.ht;
         // the roof is solid rock: you can dig down to it, and digging again right at the rock punches a hole through into the cave
         if (dc < Z.r - 3 && H[idx] <= ceil + 1 && k > .12) punch = Z; else lo = Math.max(lo, ceil + .8); } }
-      if (punch) { H[idx] = punch.floor + .3; if (!punch.breached) { punch.breached = true; punch.found = true; toast(`⛏️ <b style="color:${CAVE_T[punch.type].col}">You dug into the ${CAVE_T[punch.type].name}!</b><br>Drop down through the hole.`, 4500); sfx(90, .6, 'sawtooth', .07, .4); } }
+      if (punch) { H[idx] = punch.floor + .3; if (!punch.breached) { punch.breached = true; punch.found = true; if (!quiet) toast(`⛏️ <b style="color:${CAVE_T[punch.type].col}">You dug into the ${CAVE_T[punch.type].name}!</b><br>Drop down through the hole.`, 4500); sfx(90, .6, 'sawtooth', .07, .4); } }
       else H[idx] = Math.max(Math.min(lo, H[idx]), H[idx] - depth * k); } }
-  for (const Z of caveZones) if (!Z.hinted && !Z.breached && Math.hypot(x - Z.x, z - Z.z) < Z.r - 3 && getH(x, z) < Z.floor + Z.ht + 3.2) { Z.hinted = true;
+  for (const Z of caveZones) if (!quiet && !Z.realm && !Z.hinted && !Z.breached && Math.hypot(x - Z.x, z - Z.z) < Z.r - 3 && getH(x, z) < Z.floor + Z.ht + 3.2) { Z.hinted = true;
     toast('⛏️ The ground sounds <b>hollow</b> here… keep digging!', 3500); sfx(110, .5, 'sine', .08, .5); setTimeout(() => sfx(90, .6, 'sine', .06, .5), 220); }
   for (let i = Math.max(0, i0 - 1); i <= Math.min(SEG, i1 + 1); i++) for (let j = Math.max(0, j0 - 1); j <= Math.min(SEG, j1 + 1); j++) { const idx = i * N + j;
     if (Math.hypot(-HALF + j * STEP - x, -HALF + i * STEP - z) < rad * .9) dirt[idx] = 1; vertCol(idx); }
   for (let i = Math.max(0, i0 - 2); i <= Math.min(SEG - 1, i1 + 1); i++) for (let j = Math.max(0, j0 - 2); j <= Math.min(SEG - 1, j1 + 1); j++) writeCell(i, j);
   geo.attributes.position.needsUpdate = true; geo.attributes.normal.needsUpdate = true; geo.attributes.color.needsUpdate = true; clearNature(x, z, rad * .9);
+  if (quiet) return;
   burst(new V3(x, groundAt(x, z, 999) + .5, z), 0x7a5a3a, 14, 6, .9, 12, 1.3);
+  // dig deep enough below the sea and you fall into the Underworld
+  if (H0 && hellZone && !player.under) { const j = clamp(Math.round((x + HALF) / STEP), 0, SEG), i = clamp(Math.round((z + HALF) / STEP), 0, SEG), dug = H0[i * N + j] - H[i * N + j], h = H[i * N + j];
+    if (h <= WATER - 6 && dug >= 8 && !hellPending) { hellPending = true; toast('🔥 The ground crumbles beneath you…', 1500); sfx(50, 1, 'sawtooth', .08, .5); shake = .6; setTimeout(() => { hellPending = false; enterHell(x, z); }, 500); }
+    else if (!hotHint && h <= WATER - 2 && dug >= 4) { hotHint = true; toast('🔥 The ground is getting <b>hot</b>… something is down there. Keep digging deeper!', 4000); } }
 }
 
 // ============================================================ monsters
@@ -1800,6 +2015,14 @@ const MTYPES = {
   skeleton: { hp: 75, spd: 3.6, dmg: 10, size: 1, w: 12, coin: 11, name: 'Skeleton', ranged: 'bone', range: 15, rate: 1.9 }, // throws bones
   slime: { hp: 90, spd: 3.2, dmg: 10, size: 1.1, w: 12, coin: 8, name: 'Slime', splits: true },        // splits in two when killed
   golem: { hp: 420, spd: 2.1, dmg: 26, size: 1.7, w: 5, coin: 40, name: 'Stone Golem', slam: true },    // ground slam you must dodge
+  // --- Underworld creatures (only down there)
+  imp: { hp: 110, spd: 5, dmg: 14, size: .8, fly: true, w: 0, coin: 22, name: 'Imp', ranged: 'orb', range: 16, rate: 2.2, pcol: 0xff5a10, pelem: 'fire' },
+  hellhound: { hp: 170, spd: 7, dmg: 18, size: 1.15, w: 0, coin: 26, name: 'Hellhound', lunge: true },
+  demon: { hp: 540, spd: 2.8, dmg: 34, size: 1.9, w: 0, coin: 60, name: 'Demon', slam: true },
+  // --- Skylands creatures (only up there)
+  sprite: { hp: 100, spd: 5, dmg: 12, size: .9, fly: true, w: 0, coin: 22, name: 'Cloud Sprite', ranged: 'orb', range: 18, rate: 2, pcol: 0xfff26a, pelem: 'shock' },
+  angel: { hp: 320, spd: 4.4, dmg: 26, size: 1.2, w: 0, coin: 45, name: 'Angel Knight' },
+  hawk: { hp: 140, spd: 8, dmg: 16, size: 1.2, fly: true, w: 0, coin: 26, name: 'Thunder Hawk', lunge: true },
 };
 // ---- shared geometry + materials (monsters spawn all night, so reuse instead of rebuilding)
 const GC = {};
@@ -1818,7 +2041,7 @@ function eyes(parent, y, z, sx = .13, r = .085, iris = 0xd8a020, glow = false) {
   for (const s of [-1, 1]) { part(gS(r, 12, 10), M(0xe8e0c0, { tex: 'none', roughness: .15 }), parent, s * sx, y, z, false);
     part(gS(r * .62, 10, 8), glow ? glowM(iris, 1.6) : M(iris, { tex: 'none', roughness: .1 }), parent, s * sx, y, z + r * .5, false);
     part(gS(r * .3, 8, 6), M(0x050505, { tex: 'none', roughness: .05 }), parent, s * sx, y, z + r * .8, false);
-    if (!glow) part(gS(r * .14, 6, 5), M(0xffffff, { tex: 'none', emissive: 0xffffff, emissiveIntensity: .6 }), parent, s * sx + r * .2, y + r * .25, z + r * .95, false); }
+  }
 }
 // a muscled humanoid: torso, head with brow, nose, mouth and teeth, limbs with hands and claws
 function humanoid(inner, o) {
@@ -1832,12 +2055,13 @@ function humanoid(inner, o) {
     part(gB(.48, .07, .15), hd, inner, 0, 1.71, .26).rotation.x = .25;
     part(gB(.22, .035, .04), M(0x1a0a0a, { tex: 'none' }), inner, 0, 1.47, .31);
     eyes(inner, 1.66, .27, .13, .075, o.iris || 0xd8a020, true);
-  } else if (o.face !== false) { // regular monsters: friendly cartoon face
-    part(gS(.06, 10, 8), hd, inner, 0, 1.57, .35).scale.set(1, .85, 1);                           // button nose
-    const sm = part(new THREE.TorusGeometry(.08, .016, 6, 12, Math.PI), M(0x3a1a1a, { tex: 'none' }), inner, 0, 1.49, .3, false); sm.rotation.z = Math.PI; // smile
-    for (const s of [-1, 1]) part(gS(.055, 8, 6), M(0xff9aa8, { tex: 'none', roughness: .6 }), inner, s * .21, 1.53, .27, false).scale.z = .4; // rosy cheeks
+  } else if (o.face !== false) { // regular monsters: calm, neutral face — not smiling, not angry
+    const dkH = M(new THREE.Color(o.head).multiplyScalar(.62).getHex(), { tex: 'none', roughness: .7 });
+    part(gS(.055, 10, 8), hd, inner, 0, 1.57, .35).scale.set(1, .85, 1.25);                        // nose
+    part(gB(.12, .018, .03), M(0x3a1a1a, { tex: 'none' }), inner, 0, 1.47, .325, false);           // straight mouth
+    for (const s of [-1, 1]) part(gB(.1, .022, .035), dkH, inner, s * .13, 1.765, .3, false);       // level brows
     if (o.tusks) for (const s of [-1, 1]) part(gK(.025, .07, 5), M(0xf4efe0, { tex: 'none', roughness: .3 }), inner, s * .06, 1.47, .33, false);
-    eyes(inner, 1.66, .26, .13, .1, o.iris || 0x4a3020, false);
+    eyes(inner, 1.66, .27, .13, .082, o.iris || 0x4a3020, false);
   }
   for (const s of [-1, 1]) {
     const lp = new THREE.Group(); lp.position.set(s * .18, .52, 0); inner.add(lp);
@@ -1928,6 +2152,47 @@ function buildMonsterMesh(type) {
       const lp = new THREE.Group(); lp.position.set(s * .32, .75, 0); inner.add(lp); part(gL(.3, .08, 8), rk, lp, 0, -.3, 0); part(gB(.42, .2, .5), rk, lp, 0, -.66, .08); legs.push(lp); }
     return { g, inner, legs, arms, wings };
   }
+  // ---- Underworld creatures (red, fiery)
+  if (type === 'imp') { const h = humanoid(inner, { body: 0xb02a1a, head: 0xc0361e, cloth: 0x2a0a08 }); legs = h.legs; arms = h.arms;
+    for (const s of [-1, 1]) { const hn = part(gK(.06, .3, 8), M(0x2a1010, { tex: 'none', roughness: .4 }), inner, s * .17, 1.98, 0); hn.rotation.z = -s * .35;
+      const wp = new THREE.Group(); wp.position.set(s * .3, 1.25, -.25); inner.add(wp); const wm = part(gB(.9, .6, .02), M(0x5a1410, { side: THREE.DoubleSide }), wp, s * .45, .1, 0); wm.rotation.y = -s * .5; wings.push(wp); }
+    const tail = part(gC(.04, .015, .9, 6), M(0xb02a1a), inner, 0, .7, -.45); tail.rotation.x = -1.1;
+    const fb = glowSprite(0xff6a10, .6, .9); fb.position.set(0, -.6, .1); arms[1].add(fb);
+    return { g, inner, legs, arms, wings }; }
+  if (type === 'hellhound') { const q = quadruped(inner, 0x5a1610, {});
+    for (const s of [-1, 1]) { const hn = part(gK(.05, .26, 6), M(0x1a0a0a, { tex: 'none' }), q.head, s * .13, .3, -.1); hn.rotation.x = -.6; }
+    for (let k = 0; k < 3; k++) { const f = glowSprite(0xff5a10, .7, .7); f.position.set(0, 1.4, .35 - k * .4); inner.add(f); }
+    return { g, inner, legs: q.legs, arms, wings }; }
+  if (type === 'demon') { const h = humanoid(inner, { body: 0x8a2018, head: 0x9a2a1a, cloth: 0x1a0606, tusks: true }); legs = h.legs; arms = h.arms;
+    const hornM = M(0x2a1a14, { tex: 'none', roughness: .35 });
+    for (const s of [-1, 1]) { const hn = part(gK(.08, .55, 8), hornM, inner, s * .22, 2.0, 0); hn.rotation.z = -s * .6;
+      const wp = new THREE.Group(); wp.position.set(s * .35, 1.3, -.3); inner.add(wp); const wm = part(gB(1.3, .85, .02), M(0x3a0c08, { side: THREE.DoubleSide }), wp, s * .65, .15, 0); wm.rotation.y = -s * .5; wings.push(wp); }
+    const tail = part(gC(.06, .02, 1.1, 6), M(0x8a2018), inner, 0, .7, -.5); tail.rotation.x = -1.2;
+    part(gS(.1), M(0x601000, { tex: 'none', emissive: 0xff4a00, emissiveIntensity: 1 }), inner, 0, 1.2, .36, false);
+    return { g, inner, legs, arms, wings }; }
+  // ---- Skylands creatures (white, gold, airy)
+  if (type === 'sprite') { const cm = M(0xffffff, { tex: 'none', roughness: 1, emissive: 0x404858 });
+    for (const [px, py, pz, r] of [[0, 0, 0, .5], [.38, -.05, 0, .36], [-.38, -.05, 0, .36], [0, .3, -.1, .36], [.2, .22, .18, .3]]) part(gL(r, .06, 3), cm, inner, px, py, pz);
+    eyes(inner, .05, .45, .14, .08, 0x3a5a8a, false);
+    const sp = glowSprite(0xfff26a, 1.3, .45); inner.add(sp);
+    return { g, inner, legs, arms, wings }; }
+  if (type === 'angel') { const h = humanoid(inner, { body: 0xe8e4dc, head: 0xf0c8a8, cloth: 0xd8b860, iris: 0x3a70c0 }); legs = h.legs; arms = h.arms;
+    const silver = M(0xd8dee8, { tex: 'none', metalness: .8, roughness: .25 }), gold = M(0xffcf40, { tex: 'none', metalness: .9, roughness: .25 });
+    part(gS(.45), silver, inner, 0, 1.0, .02).scale.set(1.05, 1.05, .85);
+    part(new THREE.SphereGeometry(.37, 16, 10, 0, Math.PI * 2, 0, Math.PI * .5), gold, inner, 0, 1.66, -.02);
+    const halo = part(new THREE.TorusGeometry(.26, .025, 8, 24), M(0xfff0a0, { tex: 'none', emissive: 0xffe080, emissiveIntensity: 1 }), inner, 0, 2.15, 0, false); halo.rotation.x = Math.PI / 2;
+    for (const s of [-1, 1]) { const wp = new THREE.Group(); wp.position.set(s * .25, 1.35, -.32); inner.add(wp);
+      for (let f = 0; f < 4; f++) part(gB(.5, .03, .2), M(0xffffff, { tex: 'none', roughness: .8 }), wp, s * (.25 + f * .2), .1 - f * .08, 0).rotation.z = s * (.25 - f * .15); wings.push(wp); }
+    part(gB(.06, .9, .02), silver, arms[1], 0, -.75, .25).rotation.x = Math.PI / 2;
+    return { g, inner, legs, arms, wings }; }
+  if (type === 'hawk') { const fea = M(0x5a6a8a, { tex: 'bark', bumpScale: .02 }), wh = M(0xe8e8f0, { tex: 'bark', bumpScale: .02 }), gold = M(0xe0a020, { tex: 'none', roughness: .3 });
+    part(gS(.42), fea, inner, 0, 0, 0).scale.set(.85, .8, 1.3);
+    part(gS(.24), wh, inner, 0, .22, .5); const bk = part(gK(.07, .24, 8), gold, inner, 0, .17, .75); bk.rotation.x = Math.PI / 2 + .35;
+    eyes(inner, .28, .64, .1, .045, 0x2a2010, false);
+    for (const s of [-1, 1]) { const wp = new THREE.Group(); wp.position.set(s * .3, .1, 0); inner.add(wp);
+      for (let f = 0; f < 5; f++) part(gB(.6, .025, .2), f < 3 ? fea : wh, wp, s * (.3 + f * .22), 0, -.18 + f * .04).rotation.y = s * -f * .1; wings.push(wp); }
+    const sp = glowSprite(0xfff26a, .9, .5); sp.position.set(0, 0, -.6); inner.add(sp);
+    return { g, inner, legs, arms, wings }; }
   // humanoids
   const o = type === 'goblin' ? { body: 0x6cc24a, head: 0x7ad35a, cloth: 0x8b5a2b }
     : type === 'archer' ? { body: 0x3f8f5a, head: 0x8fd36a, cloth: 0x6b4423 }
@@ -1986,6 +2251,10 @@ const BOSSES = {
     abil: [['rain', { n: 6, r: 3, col: 0xff60a0, fx: 'tentacle', name: 'Tentacle Slam' }], ['volley', { n: 6, col: 0x402850, spread: .7, elem: 'slow', name: 'Ink Spit' }], ['pull', { r: 40, name: 'Whirlpool' }], ['pools', { n: 4, col: 0x201830, elem: 'slow', r: 3.5, name: 'Ink Cloud' }]] },
   behemoth: { name: 'Void Behemoth', where: 'cave', hp: 6400, dmg: 36, spd: 4, size: 3, glow: 0xb06aff, item: 'abyss', coin: 520,
     abil: [['charge', { mult: 1.6, name: 'Void Rampage' }], ['pull', { r: 24, name: 'Gravity Well' }], ['nova', { n: 20, col: 0xb06aff, elem: 'drain', name: 'Void Nova' }], ['slam', { r: 7, mult: 1.7, col: 0x8040ff, name: 'Abyssal Stomp' }]] },
+  overlord: { name: 'Infernal Overlord', where: 'hell', hp: 9500, dmg: 46, spd: 3.6, size: 3.6, glow: 0xff3010, item: 'infernoblade', coin: 900,
+    abil: [['slam', { r: 8, mult: 1.7, col: 0xff3010, elem: 'fire', name: 'Hellquake' }], ['rain', { n: 9, r: 3, col: 0xff5a10, fx: 'meteor', elem: 'fire', name: 'Rain of Fire' }], ['summon', { type: 'imp', n: 3, name: 'Call the Imps' }], ['nova', { n: 24, col: 0xff4010, elem: 'fire', name: 'Inferno Ring' }]] },
+  seraph: { name: 'Sky Seraph', where: 'skyland', hp: 8500, dmg: 42, spd: 5.5, size: 3, glow: 0xfff0a0, item: 'seraphbow', coin: 900, fly: true,
+    abil: [['rain', { n: 9, r: 2.6, col: 0xfff26a, fx: 'bolt', elem: 'shock', name: 'Judgement' }], ['volley', { n: 9, col: 0xfff6c0, spread: 1.1, name: 'Holy Arrows' }], ['charge', { mult: 1.6, name: 'Divine Dive' }], ['summon', { type: 'angel', n: 2, name: 'Angel Guard' }]] },
   treant: { name: 'Ancient Treant', where: 'forest', hp: 5000, dmg: 28, spd: 2.8, size: 3.3, glow: 0xffc040, item: 'heartwood', coin: 400,
     abil: [['rain', { n: 7, r: 2.6, col: 0x6a4a2a, fx: 'roots', elem: 'root', name: 'Strangling Roots' }], ['summon', { type: 'wolf', n: 3, name: 'Call the Pack' }], ['heal', { pct: .1, name: 'Photosynthesis' }], ['slam', { r: 7, mult: 1.5, col: 0x6a8a3a, name: 'Trunk Smash' }]] },
 };
@@ -2058,6 +2327,22 @@ function buildBossMesh(id) {
     for (let k = 0; k < 8; k++) { const a = k / 8 * Math.PI * 2, tg = new THREE.Group(); tg.position.set(Math.cos(a) * .7, .6, Math.sin(a) * .7); tg.rotation.y = -a; inner.add(tg);
       for (let s = 0; s < 8; s++) part(gS(.2 - s * .02, 10, 8), s % 2 ? sk2 : sk, tg, .25 + s * .28, -.12 * s + .05 * s * s * .2, 0, s < 3); tent.push(tg); }
   }
+  if (id === 'overlord') { const h = humanoid(inner, { body: 0x7a1a12, head: 0x8a2214, cloth: 0x1a0606, iris: 0xffa020, glowEyes: true }); legs = h.legs; arms = h.arms;
+    const hornM = M(0x1a0e0a, { tex: 'none', roughness: .3 }), lv = M(0x501000, { tex: 'none', emissive: 0xff3a00, emissiveIntensity: 1.1 });
+    for (const s of [-1, 1]) { const hn = part(gK(.1, .75, 10), hornM, inner, s * .24, 2.05, -.05); hn.rotation.z = -s * .7;
+      const wp = new THREE.Group(); wp.position.set(s * .35, 1.35, -.35); inner.add(wp); part(gB(1.8, 1.1, .03), M(0x2a0806, { side: THREE.DoubleSide }), wp, s * .9, .2, 0).rotation.y = -s * .5; part(gC(.04, .02, 1.9, 5), hornM, wp, s * .9, .03, .5).rotation.z = Math.PI / 2; wings.push(wp); }
+    for (let k = 0; k < 7; k++) part(gB(.018, R(.22, .42), .02), lv, inner, R(-.25, .25), R(.75, 1.25), .37, false).rotation.z = R(-.7, .7);
+    const tail = part(gC(.07, .02, 1.3, 6), M(0x7a1a12), inner, 0, .7, -.55); tail.rotation.x = -1.2;
+    part(gC(.035, .035, 1.8, 6), hornM, arms[1], 0, -.3, .12); for (const px of [-.1, 0, .1]) part(gK(.03, .2, 5), lv, arms[1], px, .7, .12, false);
+    const fc = glowSprite(0xff5010, 1.8, .9); fc.position.set(0, 2.1, 0); inner.add(fc);
+  } else if (id === 'seraph') { const h = humanoid(inner, { body: 0xf4f0e6, head: 0xf8d8c0, cloth: 0xffd860, iris: 0x60c0ff, glowEyes: true }); legs = h.legs; arms = h.arms;
+    const gold = M(0xffcf40, { tex: 'none', metalness: .9, roughness: .2 });
+    const halo = part(new THREE.TorusGeometry(.3, .035, 8, 28), M(0xfff0a0, { tex: 'none', emissive: 0xffe080, emissiveIntensity: 1.3 }), inner, 0, 2.15, 0, false); halo.rotation.x = Math.PI / 2;
+    for (const s of [-1, 1]) { const wp = new THREE.Group(); wp.position.set(s * .3, 1.4, -.35); inner.add(wp);
+      for (let f = 0; f < 6; f++) part(gB(.7, .03, .26), M(0xffffff, { tex: 'none', roughness: .8 }), wp, s * (.35 + f * .27), .2 - f * .1, 0).rotation.z = s * (.35 - f * .14); wings.push(wp); }
+    part(gC(.03, .03, 2, 6), gold, arms[1], 0, -.3, .12); part(gK(.07, .3, 8), gold, arms[1], 0, .85, .12);
+    const sg = glowSprite(0xfff0a0, 1.2, .8); sg.position.set(0, .85, .12); arms[1].add(sg);
+  }
   return { g, inner, legs, arms, wings, tent };
 }
 const monsters = [];
@@ -2068,7 +2353,8 @@ function spawnMonster(opts = {}) {
   const tot = Object.values(MTYPES).reduce((a, b) => a + b.w, 0); let r = rand() * tot, type = 'goblin';
   for (const k in MTYPES) { r -= MTYPES[k].w; if (r <= 0) { type = k; break; } }
   if (type === 'brute' && dayNum < 2 && rand() < .5) type = 'goblin'; if (type === 'golem' && dayNum < 2 && !opts.zone) type = 'brute';
-  if (!opts.type && !opts.minion && !kingAlive() && rand() < (opts.zone ? .05 : .04)) type = 'king'; // rare!
+  if (!opts.type && !opts.minion && !(opts.zone && opts.zone.mtypes) && !kingAlive() && rand() < (opts.zone ? .05 : .04)) type = 'king'; // rare!
+  if (!opts.type && opts.zone && opts.zone.mtypes) type = pick(opts.zone.mtypes); // the Underworld & Skylands have their own creatures
   if (opts.type) type = opts.type;
   let x = opts.x, z = opts.z, ok = x !== undefined;
   const Zn = opts.zone;
@@ -2102,7 +2388,8 @@ function nearestMonster(p, maxD, filter) {
 }
 function applyHit(m, dmg, T, dir, opts = {}) {
   if (m.dead) return;
-  let crit = false; if (T.clover && rand() < Math.min(.8, .12 * T.clover)) { dmg *= 2; crit = true; }
+  let crit = false; const critCh = Math.min(.85, .12 * (T.clover || 0) + .2 * (T.demonhorn || 0) + .3 * (T.sunshard || 0));
+  if (critCh > 0 && rand() < critCh) { dmg *= (T.sunshard && T.moon) ? 5 : T.sunshard ? 3 : 2; crit = true; }
   if (T.meat && T.axe && player.hp < player.max * .4) dmg *= 2; // BERSERKER
   if (T.ice && T.anchor && m.slow > 0) dmg *= 2; // GLACIER CRUSH
   if (T.knife && T.web && (m.root > 0 || m.stun > 0)) dmg *= 3; // BACKSTAB
@@ -2121,6 +2408,13 @@ function applyHit(m, dmg, T, dir, opts = {}) {
     for (const o of monsters) if (!o.dead && o !== m && Math.hypot(o.x - m.x, o.z - m.z) < 4) applyHit(o, dmg * .8, {}, null, { splash: true }); }
   if (m.mark > 0) dmg *= 1 + .2 * m.markLvl; // cursed by the evil eye
   if (T.fang && m.slow > 0) dmg *= 1 + .6 * T.fang; // WYRM FANG shatters frozen enemies
+  if (T.hellbrick) dmg *= 1 + .3 * T.hellbrick;
+  if (T.demonhorn) dmg *= 1 + .4 * T.demonhorn;
+  if (player.soulT > 0) dmg *= 1 + .05 * (player.souls || 0);
+  if (T.obsidian && !opts.splash) dmg += m.max * .02 * T.obsidian;
+  if (T.skypearl && m.fly) dmg *= 1 + .3 * T.skypearl;
+  if (T.halo && T.demonhorn) dmg *= 1.8; // FALLEN ANGEL
+  if (T.obsidian && T.lavabucket && m.burn > 0) dmg *= 2; // OBSIDIAN FORGE
   m.hp -= dmg; m.flash = .15; m.bar.visible = true;
   const c = mCenter(m);
   // ---- boss item powers
@@ -2141,6 +2435,25 @@ function applyHit(m, dmg, T, dir, opts = {}) {
   if (T.abyss && !opts.splash) { player.abyssN = (player.abyssN || 0) + 1; if (player.abyssN >= 5) { player.abyssN = 0;
     addHazard(m.x, m.y, m.z, 3.2, 2.4, dmg * .7 * T.abyss, {}, 0x6a20c0); hazards[hazards.length - 1].pull = 9 + T.abyss; flash(c, 0xb06aff, 9, .5); sfx(60, .8, 'sine', .08, .3); } }
   if (T.heartwood) { m.root = Math.max(m.root, 1.4); burst(c, 0x6a8a3a, 6, 2, .5, 3); }
+  // ---- underworld & skylands item powers
+  const near = (rad, fn) => { for (const o of monsters.slice()) if (o !== m && !o.dead && Math.hypot(o.x - m.x, o.z - m.z) < rad) fn(o); };
+  if (T.lavabucket && !opts.splash) addHazard(m.x, m.y, m.z, 2.6, 4, dmg * .6 * T.lavabucket, { fire: 2 }, 0xff4a00);
+  if (T.hellbrick) m.stun = Math.max(m.stun, .5);
+  if (T.hellfire) { m.burn = 5; m.burnDps = Math.max(m.burnDps, dmg * .6 * T.hellfire); m.hellfire = 1; burst(c, 0xff3a10, 6, 3, .5, -3); }
+  if (T.pitchfork) { m.burn = Math.max(m.burn, 3); m.burnDps = Math.max(m.burnDps, dmg * .3 * T.pitchfork); }
+  if (T.brimstone && !opts.splash && rand() < .35) { explode(c.clone(), 3.5, dmg * .9, { fire: 1 });
+    if (T.cloudbucket) for (let k = 0; k < 3; k++) { const a = rand() * 6.28, p = c.clone().add(new V3(Math.cos(a) * 4, 0, Math.sin(a) * 4)); setTimeout(() => explode(p, 3, dmg * .7, { fire: 1 }), 200 + k * 150); } } // BRIMSTONE RAIN
+  if (T.cloudbucket && !opts.splash) { addHazard(m.x, m.y, m.z, 3, 4, dmg * .35 * T.cloudbucket, { ice: 1 }, 0xbfe0ff);
+    if (T.spark) monsters.filter(o => !o.dead && Math.hypot(o.x - m.x, o.z - m.z) < 9).slice(0, 3).forEach(o => { const oc = mCenter(o); lightning(oc.clone().add(new V3(R(-1, 1), 16, R(-1, 1))), oc); if (o !== m) applyHit(o, dmg * .7, {}, null, { splash: true, chain: true, noExplode: true }); }); } // THUNDERHEAD
+  if (T.waterbucket && !opts.splash) { player.hp = Math.min(player.max, player.hp + 4 * T.waterbucket); burst(c, 0x6ac8ff, 10, 5, .5, 6);
+    near(4, o => { if (!o.boss) { const ox = o.x - m.x, oz = o.z - m.z, od = Math.hypot(ox, oz) || 1; o.kx += ox / od * 10; o.kz += oz / od * 10; } }); }
+  if (T.lavabucket && T.waterbucket && !opts.splash) { flash(c, 0xffffff, 8, .4); burst(c, 0xf0f0f0, 18, 6, .8, -3, 1.5); near(4, o => applyHit(o, dmg * .8, {}, null, { splash: true, noExplode: true })); } // STEAM BLAST
+  if (T.harp && !opts.chain) { let prev = c; monsters.filter(o => o !== m && !o.dead && Math.hypot(o.x - m.x, o.z - m.z) < 10).slice(0, 3).forEach(o => { const oc = mCenter(o); lightning(prev, oc); prev = oc; applyHit(o, dmg * .5, {}, null, { chain: true, splash: true, noExplode: true }); });
+    player.hp = Math.min(player.max, player.hp + dmg * .02 * T.harp); }
+  if (T.skyspear && !opts.splash) { flash(c, 0xfff0a0, 7, .4); for (let k = 0; k < 6; k++) burst(c.clone().add(new V3(0, k * 1.5, 0)), 0xfff6c0, 2, 1, .5, -2); const hf = T.hellfire ? { fire: 3 } : {}; // HOLY FIRE
+    near(3.5, o => applyHit(o, dmg * .8, hf, null, { splash: true, noExplode: true })); if (T.hellfire) { m.burn = 5; m.burnDps = Math.max(m.burnDps, dmg * .5); } }
+  if (T.infernoblade) { m.burn = 5; m.burnDps = Math.max(m.burnDps, dmg * .5 * T.infernoblade); if (!opts.splash) { flash(c, 0xff4010, 6, .3); near(5, o => applyHit(o, dmg * .6, { fire: 2 }, null, { splash: true, noExplode: true })); } }
+  if (T.seraphbow) player.hp = Math.min(player.max, player.hp + dmg * .03 * T.seraphbow);
   if (T.eye) { m.mark = 4; m.markLvl = Math.max(m.markLvl, T.eye); burst(c, 0x9a40ff, 5, 2, .5, -1); }
   if (T.web) { m.root = Math.max(m.root, 1 + .5 * T.web); burst(c, 0xffffff, 6, 2, .5, 3); }
   if (T.horn) { m.fear = Math.max(m.fear, 1.5 + .7 * T.horn); }
@@ -2183,9 +2496,13 @@ function killMonster(m) {
     const nGhost = (T.ghost ? (T.skull ? 3 : 1) : 0) + (T.phylactery ? 2 : 0), gcol = T.phylactery ? 0x9affc0 : 0xe8e8ff;
     for (let g = 0; g < nGhost; g++) setTimeout(() => { const t = nearestMonster(c, 18, o => !o.dead); if (!t) return; const tc = mCenter(t);
       for (let k = 0; k <= 6; k++) burst(c.clone().lerp(tc, k / 6), gcol, 2, 1, .5, -1); applyHit(t, heldPower() * (1 + .5 * ((T.ghost || 0) + (T.phylactery || 0))), {}, null, { splash: true }); flash(tc, gcol, 3, .3); }, 250 + g * 200);
+    if (m.hellfire && T.hellfire) explode(c.clone(), 4, heldPower() * 1.5 * T.hellfire, { fire: 2 });
+    if (T.soulflame) { const sh = T.skull ? .25 : .1; player.hp = Math.min(player.max, player.hp + player.max * sh); player.souls = Math.min(T.skull ? 20 : 10, (player.soulT > 0 ? player.souls || 0 : 0) + 1); player.soulT = 10; burst(c, 0x6ac8ff, 8, 3, .6, -3); }
+    if (T.halo && T.demonhorn) player.hp = Math.min(player.max, player.hp + player.max * .08);
+    if (T.hellskull) setTimeout(() => { const t = nearestMonster(c, 20, o => !o.dead); if (!t) return; const tc = mCenter(t); for (let k = 0; k <= 8; k++) burst(c.clone().lerp(tc, k / 8), 0xff6a10, 2, 1, .4, -1); explode(tc, 3.5, heldPower() * 3 * T.hellskull, { fire: 2 }); }, 300);
     if (m.ankh && T.ankh) { flash(c, 0xffd890, 9, .4); burst(c, 0xe0c080, 24, 8, .8, 4, 1.4); sfx(140, .35, 'sawtooth', .05, .5); // PHARAOH ANKH: sand blast
       for (const o of monsters.slice()) if (!o.dead && o !== m && Math.hypot(o.x - m.x, o.z - m.z) < 5.5) applyHit(o, heldPower() * 2 * T.ankh, {}, new V3(o.x - m.x, 0, o.z - m.z).normalize(), { splash: true, noExplode: true }); } }
-  const gold = Math.max(1, Math.round(m.d.coin * (m.coinMul || 1) * Math.pow(1.6, m.lvl) * (1 + .3 * (curT().coins || 0) + .25 * (curT().crown || 0) + .5 * (curT().ankh || 0)) * R(.85, 1.15)));
+  const gold = Math.max(1, Math.round(m.d.coin * (m.coinMul || 1) * Math.pow(1.6, m.lvl) * (1 + .3 * (curT().coins || 0) + .25 * (curT().crown || 0) + .5 * (curT().ankh || 0) + .5 * (curT().skypearl || 0)) * R(.85, 1.15)));
   if (m.boss) { bossDefeated(m, c); return; }
   if (m.d.splits && !m.mini) for (let k = 0; k < 2; k++) spawnMonster({ type: 'slime', x: m.x + (k ? 1 : -1), z: m.z + R(-.5, .5), minion: true, mini: true, zone: m.cave });
   if (m.d.king) { // big money + a super rare item (sometimes already merged)
@@ -2194,6 +2511,7 @@ function killMonster(m) {
     toast(`👑 <b style="color:#ffd84a">King defeated!</b> +🪙 ${gold} and a super rare item!`, 4000); [784, 988, 1175, 1568].forEach((f, k) => setTimeout(() => sfx(f, .25, 'triangle', .06, 1), k * 100)); return; }
   if (curT().coins && curT().gem) spawnCoins(Math.max(2, Math.round(gold * .5)), m.x, m.y, m.z); // MIDAS TOUCH
   addCoins(gold, c);
+  if (m.cave && m.cave.realm && rand() < .22) spawnLoot(baseItem(pick(REALM_KEYS[m.cave.realm])), m.x, m.z, true, 1); // realm monsters drop realm items
   if (rand() < (m.type === 'brute' ? 1 : .6)) { // stronger monsters drop better (pre-merged) loot
     let n = 0; while (n < Math.min(3, m.lvl) && rand() < .5) n++; const it = lootItem(n);
     spawnLoot(it, m.x, m.z, true, 1); }
@@ -2202,7 +2520,7 @@ function killMonster(m) {
 const lairs = [];
 let nearLair = null, nearLairD = 1e9; // the altar you're standing at (bosses only start when you press Fight)
 const fightBtn = document.getElementById('fightBtn');
-function startBossFight() { const L = nearLair; if (!L || L.boss || L.defeated || !alive || state !== 'play') return; spawnBoss(L); fightBtn.style.display = 'none'; }
+function startBossFight() { if (!nearLair && nearBed && alive && state === 'play') { sleepInBed(nearBed); return; } const L = nearLair; if (!L || L.boss || L.defeated || !alive || state !== 'play') return; spawnBoss(L); fightBtn.style.display = 'none'; }
 fightBtn.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); startBossFight(); });
 let shake = 0;
 function placeLairs() {
@@ -2212,7 +2530,8 @@ function placeLairs() {
     if (['volcano', 'desert', 'tundra', 'mushroom', 'sky'].includes(B.where)) { const b = biomes.find(b => b.type === B.where);
       if (b) for (let k = 0; k < 250 && !s; k++) { const a = rand() * 6.28, d = R(15, b.r + 4), x = b.x + Math.cos(a) * d, z = b.z + Math.sin(a) * d, h = flat(x, z);
         if (h !== null && far(x, z) && !lavaPools.some(p => Math.hypot(p.x - x, p.z - z) < p.r + 8) && !structures.some(st => st.kind !== 'biome' && Math.hypot(st.x - x, st.z - z) < st.r + 9)) s = { x, z, h }; } }
-    else if (B.where === 'cave') { zone = caveZones.find(Z => Z.type === 'ruins') || caveZones[caveZones.length - 1];
+    else if (B.where === 'hell' || B.where === 'skyland') { zone = B.where === 'hell' ? hellZone : skyZone; if (zone) s = { x: zone.x + zone.lairOff.x, z: zone.z + zone.lairOff.z, h: zone.floor }; }
+    else if (B.where === 'cave') { const cz_ = caveZones.filter(Z => !Z.realm); zone = cz_.find(Z => Z.type === 'ruins') || cz_[cz_.length - 1];
       if (zone) { const a = Math.atan2(zone.exit.z - zone.z, zone.exit.x - zone.x) + Math.PI; s = { x: zone.x + Math.cos(a) * 16, z: zone.z + Math.sin(a) * 16, h: zone.floor }; } }
     else if (B.where === 'peak') { let best = null; for (let k = 0; k < 1500; k++) { const x = R(-HALF + 40, HALF - 40), z = R(-HALF + 40, HALF - 40), h = getH(x, z);
         if (h > 20 && h < 70 && slopeAt(x, z) < .3 && far(x, z) && freeSpot(x, z, 12) && (!best || h > best.h)) best = { x, z, h }; } s = best; }
@@ -2241,7 +2560,7 @@ function buildLair(L) {
   } else { const ring = new THREE.Mesh(new THREE.RingGeometry(3, 6, 40).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: B.glow, transparent: true, opacity: .35, depthWrite: false })); ring.position.y = .15; g.add(ring); L.ring = ring; }
   L.orb = part(gS(.42), gl, g, 0, B.water ? 1 : 2.2, 0, false);
   const og = glowSprite(B.glow, 4, .8); og.position.y = B.water ? 1 : 2.2; g.add(og); L.og = og;
-  const bh = L.zone ? 14 : 46, beam = glowSprite(B.glow, 1, .45); beam.scale.set(3, bh, 1); beam.position.y = bh / 2; g.add(beam); L.beam = beam;
+  const bh = L.zone ? (L.zone.realm === 'sky' ? 30 : 14) : 46, beam = glowSprite(B.glow, 1, .45); beam.scale.set(3, bh, 1); beam.position.y = bh / 2; g.add(beam); L.beam = beam;
 }
 function updateLair(L, dt) {
   if (L.boss && L.boss.dead && !L.defeated) L.boss = null; // wandered off / reset: the altar wakes again
@@ -2250,7 +2569,7 @@ function updateLair(L, dt) {
   if (L.ring) L.ring.rotation.y += dt * .6;
   if (!idle || !alive) return;
   const P = player.pos, d = Math.hypot(P.x - L.x, P.z - L.z), same = L.zone ? player.under === L.zone : !player.under;
-  if (same && d < (L.zone ? 13 : L.B.water ? 34 : 24) && d < nearLairD) { nearLair = L; nearLairD = d; }
+  if (same && d < (L.zone ? (L.zone.big ? 22 : 13) : L.B.water ? 34 : 24) && d < nearLairD) { nearLair = L; nearLairD = d; }
 }
 function spawnBoss(L) {
   const B = L.B, parts = buildBossMesh(L.id), lvl = dayNum - 1 + L.lvl, sz = B.size;
@@ -2298,6 +2617,7 @@ function shockFx(w, col) { const p = new V3(w.x, w.y + .4, w.z); for (let k = 0;
 function knockPlayer(x, z, f, up) { const P = player.pos, dx = P.x - x, dz = P.z - z, d = Math.hypot(dx, dz) || 1; player.kbx = dx / d * f; player.kbz = dz / d * f; player.vy = Math.max(player.vy, up); player.onGround = false; }
 // what boss elements do to you
 function applyElem(e, src, dmg) { if (!e || !alive) return;
+  if (e === 'fire' && (curT().magmacore || curT().infernoblade)) return;
   if (e === 'fire' || e === 'poison' || e === 'drain') { player.dotDps = Math.max(player.dotT > 0 ? player.dotDps || 0 : 0, dmg * .1); player.dotT = 3; player.dotCol = e === 'fire' ? 0xff6a1a : e === 'poison' ? 0x7be05a : 0xb06aff;
     if (e === 'drain' && src && !src.dead) { src.hp = Math.min(src.max, src.hp + dmg * .6); burst(mCenter(src), 0xb06aff, 6, 2, .5, -2); } }
   if (e === 'ice' || e === 'slow' || e === 'shock') player.slowT = Math.max(player.slowT || 0, e === 'shock' ? 1 : 2.5);
@@ -2376,7 +2696,7 @@ function bossY(m, gy, dt) {
   const B = m.B, P = player.pos;
   if (m.cast && m.cast.kind === 'leap') m.y = m.leapY;
   else if (B.fly) { const dist = Math.hypot(P.x - m.x, P.z - m.z), diving = m.cast && m.cast.kind === 'charge' && m.cast.e > .75;
-    const ty = (diving || (dist < 9 && m.aggro && !m.cast)) ? Math.max(gy, WATER, P.y) + 1.4 : Math.max(gy, WATER) + 7 + Math.sin(m.phase) * .8; m.y = lerp(m.y, ty, 1 - Math.pow(.15, dt)); }
+    const ty = (diving || (dist < 9 && m.aggro && !m.cast)) ? Math.max(wl(gy), P.y) + 1.4 : wl(gy) + 7 + Math.sin(m.phase) * .8; m.y = lerp(m.y, ty, 1 - Math.pow(.15, dt)); }
   else if (B.water) m.y = WATER - 1.2 + Math.sin(m.phase * .8) * .3;
 }
 function bossAnim(m, dt) {
@@ -2409,7 +2729,7 @@ const bossFight = () => monsters.some(m => m.boss && !m.dead && m.aggro && Math.
 function updateBossSystems(dt) {
   const P = player.pos;
   nearLair = null; nearLairD = 1e9; for (const L of lairs) updateLair(L, dt);
-  const fb = nearLair && state === 'play' ? `☠️ Fight the ${nearLair.B.name}${dayNum + nearLair.lvl > 1 ? ' (Lv ' + (dayNum + nearLair.lvl) + ')' : ''}<small>${isTouch ? 'Tap' : 'Press G or click'} to start the boss fight</small>` : '';
+  const fb = nearLair && state === 'play' ? `☠️ Fight the ${nearLair.B.name}${dayNum + nearLair.lvl > 1 ? ' (Lv ' + (dayNum + nearLair.lvl) + ')' : ''}<small>${isTouch ? 'Tap' : 'Press G or click'} to start the boss fight</small>` : nearBed && state === 'play' ? `🛏️ Sleep & save the game<small>${isTouch ? 'Tap' : 'Press G or click'}${isNight ? ' — sleeps until morning' : ''} · you wake up here after dying</small>` : '';
   if (fb) { if (fightBtn.innerHTML !== fb) fightBtn.innerHTML = fb; fightBtn.style.display = 'block'; } else if (fightBtn.style.display !== 'none') fightBtn.style.display = 'none';
   for (let i = warns.length - 1; i >= 0; i--) { const w = warns[i]; w.t -= dt; const k = 1 - w.t / w.max; w.fill.scale.setScalar(Math.max(.01, k)); w.ring.material.opacity = .55 + .4 * Math.sin(playTime * 18);
     if (w.t <= 0) { scene.remove(w.g); w.ring.material.dispose(); w.fill.material.dispose(); warns.splice(i, 1); w.fn(w); } }
@@ -2470,8 +2790,8 @@ function updateMonsters(dt) {
     if (!m.fly) resolveCollisions(p, m.r); m.x = clamp(p.x, -HALF + 6, HALF - 6); m.z = clamp(p.z, -HALF + 6, HALF - 6);
     if (m.cave && m.y < m.cave.floor + m.cave.ht) { const Z = m.cave, ox = m.x - Z.x, oz = m.z - Z.z, od = Math.hypot(ox, oz); if (od > Z.r - 1) { m.x = Z.x + ox / od * (Z.r - 1); m.z = Z.z + oz / od * (Z.r - 1); } }
     const gy = groundAt(m.x, m.z, m.y);
-    if (m.fly) { const targetY = dist < 7 && alive ? P.y + 1.3 : Math.max(gy, WATER) + 4.5 + Math.sin(m.phase * 1.5) * .8; m.y = lerp(m.y, targetY, 1 - Math.pow(.15, dt)); }
-    else { m.y = Math.max(gy, WATER - 1.2); }
+    if (m.fly) { const targetY = dist < 7 && alive ? P.y + 1.3 : wl(gy) + 4.5 + Math.sin(m.phase * 1.5) * .8; m.y = lerp(m.y, targetY, 1 - Math.pow(.15, dt)); }
+    else { m.y = gy < WATER - 20 ? gy : Math.max(gy, WATER - 1.2); }
     if (m.boss) bossY(m, gy, dt);
     // attack
     if (alive && !m.boss && m.cd <= 0 && m.stun <= 0 && m.fear <= 0 && !m.d.ranged && !m.d.king && dist < reach && Math.abs((m.fly ? m.y - 1 : m.y) - P.y) < 2.2) { m.cd = 1.3; m.atk = .3; hurtPlayer(m.dmg, m); if (m.d.webs) { player.slowT = Math.max(player.slowT || 0, 2); burst(eyePos().addScaledVector(lookDir(), 1.5), 0xffffff, 8, 2, .5, 3); } }
@@ -2515,7 +2835,7 @@ function fireProjectiles(st, T, dir) {
     const pos = eyePos().add(new V3(Math.cos(camYaw) * .25, -.25, -Math.sin(camYaw) * .25)).addScaledVector(dir, .8);
     const m = projMesh(st.ammo, ec); m.position.copy(pos);
     projs.push({ m, pos, v, grav, dmg: st.pdmg, T, life: T.boomerang ? 4 : 2.2, ammo: st.ammo, spin: st.ammo === 'boomerang' ? 'y' : (st.ammo === 'rock' || st.ammo === 'bomb' || st.ammo === 'star'),
-      speed: spd, age: 0, hitSet: new Set(), pierce: T.trident || 0, ret: !!T.boomerang, back: false });
+      speed: spd, age: 0, hitSet: new Set(), pierce: (T.trident || 0) + 6 * (T.seraphbow || 0), ret: !!T.boomerang, back: false });
   }
   if (!st.silent) sfx(st.ammo === 'orb' ? 640 : 420, .1, st.ammo === 'orb' ? 'sine' : 'triangle', .05, st.ammo === 'orb' ? 1.6 : .5);
 }
@@ -2523,11 +2843,11 @@ function fireProjectiles(st, T, dir) {
 const eprojs = [];
 function enemyShoot(m) {
   const from = mCenter(m).add(new V3(0, .3 * m.sz, 0)), target = eyePos().add(new V3(0, -.6, 0));
-  const isArrow = m.d.ranged === 'arrow' || m.d.ranged === 'bone', spd = m.d.ranged === 'bone' ? 17 : isArrow ? 22 : 13;
+  const isArrow = m.d.ranged === 'arrow' || m.d.ranged === 'bone', spd = m.d.ranged === 'bone' ? 17 : isArrow ? 22 : m.d.pcol ? 17 : 13;
   const dir = target.sub(from).normalize();
-  const mesh_ = m.d.ranged === 'bone' ? projMesh('bone') : isArrow ? projMesh('arrow', 0xff5050) : projMesh('orb', 0xff4fd0);
+  const mesh_ = m.d.ranged === 'bone' ? projMesh('bone') : isArrow ? projMesh('arrow', 0xff5050) : projMesh('orb', m.d.pcol || 0xff4fd0);
   mesh_.position.copy(from);
-  eprojs.push({ m: mesh_, pos: from, v: dir.multiplyScalar(spd), dmg: m.dmg, life: 4, src: m, arrow: isArrow });
+  eprojs.push({ m: mesh_, pos: from, v: dir.multiplyScalar(spd), dmg: m.dmg, life: 4, src: m, arrow: isArrow, elem: m.d.pelem });
   sfx(isArrow ? 360 : 520, .12, isArrow ? 'triangle' : 'sine', .035, isArrow ? .6 : 1.4);
 }
 function clearEProjs() { for (const p of eprojs) scene.remove(p.m); eprojs.length = 0; }
@@ -2555,7 +2875,7 @@ function updateProjs(dt) {
       if (d < 1.2 || p.life <= 0) { removeProj(i); continue; }
       p.v.copy(to.multiplyScalar(p.speed / d));
     } else {
-      if (p.T.magnet) { const t = nearestMonster(p.pos, 22, m => !p.hitSet.has(m)); if (t) { const want = mCenter(t).sub(p.pos).normalize().multiplyScalar(p.v.length()); p.v.lerp(want, Math.min(1, dt * 4 * p.T.magnet)); } }
+      if (p.T.magnet || p.T.starlight) { const t = nearestMonster(p.pos, 22, m => !p.hitSet.has(m)); if (t) { const want = mCenter(t).sub(p.pos).normalize().multiplyScalar(p.v.length()); p.v.lerp(want, Math.min(1, dt * 4 * ((p.T.magnet || 0) + (p.T.starlight || 0)))); } }
       p.v.y -= p.grav * dt;
     }
     p.pos.addScaledVector(p.v, dt); p.m.position.copy(p.pos);
@@ -2620,6 +2940,7 @@ function attack() {
     let dir = look.clone();
     if (target) dir = mCenter(target).sub(eye).normalize();
     fireProjectiles(st, T, dir);
+    if (T.starlight && T.cloud) { player.volleyN = (player.volleyN || 0) + 1; if (player.volleyN % 3 === 0) fireProjectiles({ ammo: 'star', shots: 6, pdmg: st.pdmg, silent: true }, Object.assign({}, T, { starlight: 1 }), dir); } // STARFALL
   }
 }
 // ---- super rare right-click abilities
@@ -2686,7 +3007,7 @@ function dash() {
 function jump() {
   if (!alive) return; const T = curT();
   if (player.onGround && T.spring && T.bomb) explode(player.pos.clone().add(new V3(0, .3, 0)), 3 + T.bomb, heldPower() * 1.3, {}); // ROCKET JUMP
-  if (player.onGround || player.swim) { player.vy = 10.5 * (1 + Math.min(1, .25 * (T.spring || 0))); player.onGround = false; player.jumps = (T.feather || 0) + 2 * (T.roc || 0); sfx(400, .08, 'sine', .03, 1.6); }
+  if (player.onGround || player.swim) { player.vy = 10.5 * (1 + Math.min(1, .25 * (T.spring || 0))); player.onGround = false; player.jumps = (T.feather || 0) + 2 * ((T.roc || 0) + (T.cloud || 0)); sfx(400, .08, 'sine', .03, 1.6); }
   else if (player.jumps > 0) { player.jumps--; player.vy = 9.5; burst(player.pos.clone(), 0xffffff, 8, 3, .4, 2); sfx(600, .08, 'sine', .03, 1.6); }
 }
 
@@ -2695,7 +3016,7 @@ function resolveCollisions(p, r, h = 1.8) {
   for (const c of circles) { const dx = p.x - c.x, dz = p.z - c.z, rr = c.r + r; if (dx > rr || dx < -rr || dz > rr || dz < -rr) continue;
     if (c.maxY !== undefined && (p.y > c.maxY || p.y + h < c.minY)) continue;
     const d2 = dx * dx + dz * dz; if (d2 < rr * rr) { const d = Math.sqrt(d2) || .001; p.x = c.x + dx / d * rr; p.z = c.z + dz / d * rr; } }
-  for (const b of boxes) { if (p.y > b.maxY - .05 || p.y + h < b.minY) continue;
+  for (const b of boxes) { if (b.off || p.y > b.maxY - .05 || p.y + h < b.minY) continue;
     const cx = clamp(p.x, b.minX, b.maxX), cz = clamp(p.z, b.minZ, b.maxZ), dx = p.x - cx, dz = p.z - cz, d2 = dx * dx + dz * dz;
     if (d2 < r * r) { if (d2 > 1e-8) { const d = Math.sqrt(d2); p.x = cx + dx / d * r; p.z = cz + dz / d * r; }
       else { const l = p.x - b.minX, rt = b.maxX - p.x, f = p.z - b.minZ, bk = b.maxZ - p.z, mn = Math.min(l, rt, f, bk);
@@ -2867,11 +3188,11 @@ function updateSky(dt) {
   skyMat.uniforms.sunD.value.copy(sunDir); skyMat.uniforms.sunC.value.setRGB(1, lerp(.85, .55, setF), lerp(.6, .35, setF)).multiplyScalar(smooth(-.2, .1, sh) * .9);
   skyDome.position.copy(camera.position);
   scene.background.copy(hor); scene.fog.color.copy(hor);
-  if (player.under) { const fc = CAVE_T[player.under.type].fog; scene.background.setHex(fc); scene.fog.color.setHex(fc); scene.fog.near = 10; scene.fog.far = 70; skyDome.visible = false; } else { scene.fog.near = 70; scene.fog.far = 330; skyDome.visible = true; }
+  if (player.under && !player.under.open) { const fc = CAVE_T[player.under.type].fog; scene.background.setHex(fc); scene.fog.color.setHex(fc); scene.fog.near = 10; scene.fog.far = 70; skyDome.visible = false; } else { scene.fog.near = 70; scene.fog.far = 330; skyDome.visible = true; }
   // refresh the reflections every few seconds as the sky changes (and right away when you go underground)
   updateSky.envT = (updateSky.envT || 0) - Math.max(dt, .016); const envKey = player.under ? 'u' : 's';
   if (updateSky.envT <= 0 || updateSky.envKey !== envKey) { updateSky.envT = 4; updateSky.envKey = envKey;
-    if (player.under) { const fc = new THREE.Color(CAVE_T[player.under.type].fog).multiplyScalar(2.5); skyMat.uniforms.hor.value.copy(fc); skyMat.uniforms.top.value.copy(fc).multiplyScalar(.5); }
+    if (player.under && !player.under.open) { const fc = new THREE.Color(CAVE_T[player.under.type].fog).multiplyScalar(2.5); skyMat.uniforms.hor.value.copy(fc); skyMat.uniforms.top.value.copy(fc).multiplyScalar(.5); }
     envGround.material.color.setRGB(.2 * (.3 + dayF), .26 * (.3 + dayF), .16 * (.3 + dayF)); updateEnv(); }
   hemi.intensity = .2 + .26 * dayF; hemi.color.setHSL(.58, .5, .6 + .2 * dayF); ambient.intensity = .08 + .06 * (1 - dayF);
   const P = player.pos;
@@ -2901,6 +3222,49 @@ function onNewDay() {
   toast(`📦 Day ${dayNum}: +20 max HP and new chests appeared!${back ? `<br>☠️ ${back} defeated boss${back > 1 ? 'es have' : ' has'} returned — stronger.` : ''}`, 4000);
 }
 
+// ============================================================ saving: sleep in a bed to save; next time you can Continue
+const ser = it => it ? { t: it.traits, p: it.power, r: it.tier } : null;
+const deser = o => o && o.t ? makeItem(o.t, o.p, o.r) : null;
+let baseChestCount = 0;
+function saveGame() { if (!player.bed) return false;
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify({ v: 1, seed: WORLD_SEED, day: dayNum, tod, coins, kills: player.kills, merges: mergesDone, baseMax: player.baseMax, bed: player.bed,
+    inv: inv.map(ser), armor: Object.fromEntries(EQUIP_SLOTS.map(k => [k, ser(armor[k])])), sel, disc: [...discovered], book: bookOwned, digs: digLog,
+    opened: chests.slice(0, baseChestCount).map((c, i) => c.open ? i : -1).filter(i => i >= 0), lairs: lairs.map(L => [L.defeated ? 1 : 0, L.lvl]),
+    realms: [hellZone && hellZone.found ? 1 : 0, skyZone && skyZone.found ? 1 : 0], hellEnt: hellZone && hellZone.found ? hellZone.ent : null, time: Date.now() })); return true; }
+  catch (e) { return false; } }
+function applySave(S) {
+  for (const d of S.digs || []) deformTerrain(d[0], d[1], d[2], d[3], true);
+  digLog.length = 0; digLog.push(...(S.digs || []));
+  for (const i of S.opened || []) { const c = chests[i]; if (c && !c.open) { c.open = true; c.t = 1; c.lid.rotation.x = -1.9; c.g.remove(c.beam); } }
+  (S.lairs || []).forEach((v, i) => { if (lairs[i]) { lairs[i].defeated = !!v[0]; lairs[i].lvl = v[1] || 0; } });
+  dayNum = S.day || 1; tod = S.tod ?? .06; coins = S.coins ?? 30; player.kills = S.kills || 0; mergesDone = S.merges || 0; player.baseMax = S.baseMax || 100; bookOwned = !!S.book;
+  for (const k of EQUIP_SLOTS) armor[k] = deser(S.armor && S.armor[k]);
+  inv.fill(null); renderInv(); (S.inv || []).forEach((o, i) => { if (i < inv.length) inv[i] = deser(o); }); sel = S.sel < inv.length ? S.sel : 0;
+  discovered.clear(); for (const d of S.disc || []) discovered.add(d);
+  if (hellZone && S.realms && S.realms[0]) { hellZone.found = true; if (S.hellEnt) hellZone.ent = S.hellEnt; }
+  if (skyZone && S.realms && S.realms[1]) { skyZone.found = true; skyZone.ent = skyZone.stairBase; }
+  player.bed = S.bed; player.pos.set(S.bed.x, S.bed.y, S.bed.z); player.max = player.hp = player.baseMax; renderInv();
+}
+function sleepInBed(b) {
+  player.bed = { x: b.spawn.x, y: b.spawn.y, z: b.spawn.z };
+  let slept = false;
+  if (isNight) { // sleep through the night: wake up at sunrise of the next day
+    tod = .02; dayNum++; onNewDay(); sunrise(); updateSky.wasNight = false; slept = true; }
+  player.hp = player.max;
+  const ok = saveGame();
+  toast(`🛏️ ${slept ? `You slept through the night — <b>Day ${dayNum}</b>.<br>` : ''}${ok ? '<b style="color:#8fff9a">Game saved!</b> You can close the game and Continue later.<br>You will wake up here after dying.' : 'Could not save (storage blocked)'}`, 4500);
+  [392, 494, 587].forEach((f, k) => setTimeout(() => sfx(f, .3, 'sine', .05, 1), k * 140));
+}
+let nearBed = null;
+function updateHouses(dt) {
+  const P = player.pos; nearBed = null;
+  for (const h of houses) { const near = alive && Math.hypot(P.x - h.doorPos.x, P.z - h.doorPos.z) < 3.2 && Math.abs(P.y - h.doorPos.y) < 3;
+    const was = h.open > .5; h.open = clamp(h.open + (near ? 1 : -1) * dt * 3.5, 0, 1); h.door.rotation.y = smooth(0, 1, h.open) * 1.75; h.doorBox.off = h.open > .25;
+    if (was !== h.open > .5) sfx(was ? 180 : 240, .18, 'triangle', .04, was ? .6 : 1.4); }
+  if (!alive || player.under) return;
+  for (const b of beds) if (Math.hypot(P.x - b.x, P.z - b.z) < 2 && Math.abs(P.y - b.y) < 2) { nearBed = b; break; }
+}
+document.getElementById('newWorldBtn').onclick = () => { if (confirm('Start a brand new world? Your saved game will be deleted.')) { try { localStorage.removeItem(SAVE_KEY); } catch (e) { } location.reload(); } };
 // ============================================================ minimap
 const mm = document.getElementById('minimap'), mctx = mm.getContext('2d');
 const mapImg = document.createElement('canvas');
@@ -2920,7 +3284,7 @@ function drawMinimap() {
   const dot = (x, z, col, s) => { mctx.fillStyle = col; mctx.fillRect(x - P.x - s / 2, z - P.z - s / 2, s, s); };
   for (const h of houses) dot(h.x, h.z, '#8b4a2a', 7);
   for (const cv of caves) dot(cv.x, cv.z, '#3a3440', 8);
-  for (const Z of caveZones) dot(Z.ent.x, Z.ent.z, CAVE_T[Z.type].col, 9);
+  for (const Z of caveZones) if (!Z.realm) dot(Z.ent.x, Z.ent.z, CAVE_T[Z.type].col, 9);
   for (const b of biomes) if (b.lavaY !== undefined) dot(b.x, b.z, '#ff5a10', 10);
   for (const ch of chests) if (!ch.open && (!ch.cave || player.under === ch.cave)) dot(ch.x, ch.z, ch.theme ? '#ff9a40' : '#ffd040', 5);
   for (const l of loot) dot(l.x, l.z, '#ffffff', 3);
@@ -2944,6 +3308,8 @@ function update(dt) {
   player.max = player.baseMax + 30 * (T.heart || 0) + 60 * (T.heartwood || 0); if (player.hp > player.max) player.hp = player.max;
   if (T.meat && alive) player.hp = Math.min(player.max, player.hp + 2 * T.meat * dt);
   if (T.heartwood && alive) player.hp = Math.min(player.max, player.hp + 3 * T.heartwood * dt);
+  if (T.halo && alive) player.hp = Math.min(player.max, player.hp + 4 * T.halo * dt);
+  if (player.soulT > 0) { player.soulT -= dt; if (player.soulT <= 0) player.souls = 0; }
   // input
   let ix = 0, iy = 0;
   if (keys.KeyW || keys.ArrowUp) iy += 1; if (keys.KeyS || keys.ArrowDown) iy -= 1;
@@ -2956,7 +3322,7 @@ function update(dt) {
   // NOTE: right vector = (cos yaw, -sin yaw) -> (-fwdZ, fwdX)
   player.cd -= dt; player.invuln -= dt; player.dashCd -= dt; player.hurtT += dt; player.tsCd = (player.tsCd || 0) - dt;
   if (alive) {
-    const gliding = (T.glider || T.roc) && jumpHeld && !player.onGround && player.vy < 0;
+    const gliding = (T.glider || T.roc || T.cloud) && jumpHeld && !player.onGround && player.vy < 0;
     const speed = 7 * (1 + Math.min(1.4, .35 * (T.boots || 0))) * (1 + Math.min(1, .25 * (T.skate || 0)))
       * (player.swim ? ((T.fin || T.tentacle) ? .6 * (1.6 + .5 * ((T.fin || 0) + 2 * (T.tentacle || 0))) : .6) : 1) * (gliding ? 1.6 : 1)
       * (player.slowT > 0 ? .5 : 1) * (player.rootT > 0 ? 0 : 1);
@@ -2974,19 +3340,19 @@ function update(dt) {
     P.x = clamp(P.x, -HALF + 8, HALF - 8); P.z = clamp(P.z, -HALF + 8, HALF - 8);
     // vertical
     player.vy -= 26 * dt;
-    if (player.onGround || player.swim) player.hover = 1.2 * (T.ufo || 0);
-    if (T.ufo && jumpHeld && !player.onGround && player.hover > 0) { // saucer: fly upward while fuel lasts
+    if (player.onGround || player.swim) player.hover = 1.2 * (T.ufo || 0) + 4 * (T.angelwing || 0);
+    if ((T.ufo || T.angelwing) && jumpHeld && !player.onGround && player.hover > 0) { // saucer: fly upward while fuel lasts
       player.hover -= dt; player.vy = Math.min(6, player.vy + 60 * dt); if (rand() < .5) burst(player.pos.clone(), 0x9fffd0, 1, 1.5, .4, 0, .7); }
     else if (gliding) player.vy = Math.max(player.vy, -1.2);
     else if (T.feather && jumpHeld && player.vy < 0) player.vy = Math.max(player.vy, -2.5);
     P.y += player.vy * dt;
     let g = groundAt(P.x, P.z, P.y);
-    if (T.skate && T.fin && g < WATER) { g = WATER; if (ml > .1 && rand() < .25) burst(P.clone().add(new V3(0, .1, 0)), 0xbfe8ff, 2, 2, .4, 4, .8); } // WATER WALKER
+    if (((T.skate && T.fin) || T.waterbucket) && g < WATER) { g = WATER; if (ml > .1 && rand() < .25) burst(P.clone().add(new V3(0, .1, 0)), 0xbfe8ff, 2, 2, .4, 4, .8); } // WATER WALKER
     player.swim = false;
     if (P.y <= g) { if (player.vy < -13 && T.bomb && T.feather) { explode(P.clone().add(new V3(0, .5, 0)), 4 + T.bomb, heldPower() * 2.2, { fire: T.fire || 0, bomb: 0 }); camPitch += .06; } // METEOR STOMP
-      P.y = g; if (player.vy < 0) player.vy = 0; player.onGround = true; player.jumps = (T.feather || 0) + 2 * (T.roc || 0); }
+      P.y = g; if (player.vy < 0) player.vy = 0; player.onGround = true; player.jumps = (T.feather || 0) + 2 * ((T.roc || 0) + (T.cloud || 0)); }
     else if (P.y > g + .15) player.onGround = false;
-    if (g < WATER - 1 && P.y < WATER - 1.1) { P.y = WATER - 1.1; player.vy = Math.max(player.vy, 0); player.swim = true; player.jumps = (T.feather || 0) + 2 * (T.roc || 0); }
+    if (g < WATER - 1 && P.y < WATER - 1.1 && P.y > WATER - 8) { P.y = WATER - 1.1; player.vy = Math.max(player.vy, 0); player.swim = true; player.jumps = (T.feather || 0) + 2 * ((T.roc || 0) + (T.cloud || 0)); }
     if (attackHeld) attack();
     // ---- underground caves: drop in through the glowing hole, climb out at the light shaft
     player.portalCd = (player.portalCd || 0) - dt;
@@ -3002,9 +3368,11 @@ function update(dt) {
         const a = rand() * 6.28; P.set(Z.ent.x + Math.cos(a) * 4.2, Z.ent.y + .5, Z.ent.z + Math.sin(a) * 4.2); player.vy = 4; player.portalCd = 1.2; player.under = null;
         sfx(500, .4, 'sine', .05, 1.8); toast('☀️ Back on the surface', 1500); break; } }
     if (player.under) { const Z = player.under, dx = P.x - Z.x, dz = P.z - Z.z, d = Math.hypot(dx, dz); if (d > Z.r - .5) { P.x = Z.x + dx / d * (Z.r - .5); P.z = Z.z + dz / d * (Z.r - .5); } }
-    for (const Z of caveZones) Z.group.visible = player.under === Z || (Z.breached && Math.hypot(P.x - Z.x, P.z - Z.z) < Z.r + 45);
+    if (player.under && player.under.realm === 'sky' && !player.under.found) { const Z = player.under; Z.found = true; Z.ent = Z.stairBase;
+      toast('☁️ <b style="color:#fff0a0">You reached the SKYLANDS!</b><br>A secret land above the clouds — new creatures and treasure found nowhere else.<br>Stand in the golden light to slide back down.', 6500); [523, 659, 784, 1047].forEach((f, k) => setTimeout(() => sfx(f, .3, 'sine', .06, 1), k * 120)); }
+    for (const Z of caveZones) Z.group.visible = Z.always || player.under === Z || (Z.breached && Math.hypot(P.x - Z.x, P.z - Z.z) < Z.r + 45);
     // volcano lava burns
-    for (const L of lavaPools) if (!T.ember && Math.hypot(P.x - L.x, P.z - L.z) < L.r && P.y < L.y + .4 && P.y > L.y - 3) {
+    for (const L of lavaPools) if (!T.ember && !T.lavabucket && !T.magmacore && !T.infernoblade && Math.hypot(P.x - L.x, P.z - L.z) < L.r && P.y < L.y + .4 && P.y > L.y - 3) {
       player.hp -= 30 * dt; player.hurtT = 0; if (rand() < .3) burst(P.clone(), 0xff6a1a, 3, 3, .4, -3); document.getElementById('hurt').style.opacity = .6; setTimeout(() => document.getElementById('hurt').style.opacity = 0, 100);
       if (player.hp <= 0) die(); }
     // combo + item auras
@@ -3012,6 +3380,8 @@ function update(dt) {
     if (T.spark && T.magnet) { player.teslaT = (player.teslaT || 0) - dt; if (player.teslaT <= 0) { player.teslaT = 1.5;
       const ts = monsters.filter(m => !m.dead && Math.hypot(m.x - P.x, m.z - P.z) < 10 + 2 * T.magnet).sort((a, b) => Math.hypot(a.x - P.x, a.z - P.z) - Math.hypot(b.x - P.x, b.z - P.z)).slice(0, 3);
       for (const m of ts) { lightning(P.clone().add(new V3(0, 1.4, 0)), mCenter(m)); applyHit(m, heldPower() * .8 * T.spark, {}, null, { splash: true }); } if (ts.length) sfx(1100, .12, 'sawtooth', .03, .4); } }
+    if (T.magmacore) { player.magT = (player.magT || 0) - dt; if (player.magT <= 0) { player.magT = .5; const rad = 6 + 1.5 * T.magmacore;
+      for (const m of monsters) if (!m.dead && Math.hypot(m.x - P.x, m.z - P.z) < rad + m.r) { m.burn = 2; m.burnDps = Math.max(m.burnDps, 6 + 10 * T.magmacore + heldPower() * .25); burst(mCenter(m), 0xff6a10, 2, 2, .4, -2); } } }
     if (T.sun) { player.sunT = (player.sunT || 0) - dt; if (player.sunT <= 0) { player.sunT = .5; const flare = T.star ? 2 : 1, rad = (4 + T.sun) * flare;
       for (const m of monsters) if (!m.dead && Math.hypot(m.x - P.x, m.z - P.z) < rad + m.r) { m.burn = 2; m.burnDps = Math.max(m.burnDps, (2 + 3 * T.sun + heldPower() * .15) * flare); burst(mCenter(m), 0xffb030, 2, 2, .4, -2); } } }
     for (const k in abilCd) if (abilCd[k] > 0) abilCd[k] -= dt;
@@ -3041,16 +3411,16 @@ function update(dt) {
       if (c.open && c.t < 1) { c.t = Math.min(1, c.t + dt * 3); c.lid.rotation.x = -1.9 * smooth(0, 1, c.t); } }
     // spawn monsters
     // monsters only come out at night — few of them, but tough
-    if (isNight) { spawnTimer -= dt; const maxM = Math.min(12, 3 + dayNum * 2);
+    if (isNight && !player.under) { spawnTimer -= dt; const maxM = Math.min(12, 3 + dayNum * 2);
       if (spawnTimer <= 0) { spawnTimer = R(6, 10); if (monsters.filter(m => !m.cave).length < maxM) spawnMonster(); } }
     else spawnTimer = 3;
     // crystal caves: monsters day AND night while you're inside
     for (const Zn of caveZones) { const inside = player.under === Zn;
       Zn.inside = inside; if (!inside) continue;
       Zn.spawnT -= dt; const n = monsters.filter(m => m.cave === Zn && !m.dead).length;
-      if (Zn.spawnT <= 0) { Zn.spawnT = R(3, 6); if (n < 4 + Math.min(5, dayNum)) spawnMonster({ zone: Zn, lvlBonus: 1 }); } }
+      if (Zn.spawnT <= 0) { Zn.spawnT = R(3, 6); if (n < (Zn.big ? 6 : 4) + Math.min(5, dayNum)) spawnMonster({ zone: Zn, lvlBonus: Zn.lvlBonus || 1 }); } }
   }
-  updateMonsters(dt); updateProjs(dt); updateEProjs(dt); updateLoot(dt, T); updateCoins(dt, T); updateHazards(dt); updateBossSystems(dt); updateFx(dt); updateDmgNums(dt);
+  updateMonsters(dt); updateProjs(dt); updateEProjs(dt); updateLoot(dt, T); updateCoins(dt, T); updateHazards(dt); updateHouses(dt); updateBossSystems(dt); updateFx(dt); updateDmgNums(dt);
   for (const c of world.clouds) { c.position.x += dt * 2.5; if (c.position.x > HALF + 60) c.position.x = -HALF - 60; }
   for (const c of chests) if (!c.open) c.beam.material.opacity = .25 + Math.sin(playTime * 3 + c.x) * .1;
   world.water.position.y = WATER + Math.sin(playTime * .8) * .08; world.water.material.normalMap.offset.set(playTime * .004, playTime * .0027);
@@ -3099,8 +3469,8 @@ function loop(now) {
   updateLockHint();
 }
 function generate() {
-  buildTerrain(); caveZones.forEach(buildCaveZone); biomes.forEach(buildBiome); placeLairs();
-  for (let k = 0; k < 9; k++) { const s = landSpot(WATER + 2, 24, .22, 9, 30); if (s) buildHouse(s.x, s.z); }
+  buildTerrain(); caveZones.forEach(buildCaveZone); biomes.forEach(buildBiome); buildHell(); buildSky(); placeLairs();
+  for (let k = 0; k < 9; k++) { const s = landSpot(WATER + 2, 24, .2, 12, 30); if (s) buildHouse(s.x, s.z); }
   for (let k = 0; k < 6; k++) { const s = landSpot(WATER + 2, 34, .3, 11, 40); if (s) buildCave(s.x, s.z); }
   craters.slice(0, 5).forEach(c => { const h = getH(c.x, c.z); if (h > WATER + .5) makeChest(c.x, c.z, h, rand() * 6); });
   { let best = []; for (let k = 0; k < 600; k++) { const x = R(-HALF + 30, HALF - 30), z = R(-HALF + 30, HALF - 30); best.push({ x, z, h: getH(x, z) }); }
@@ -3113,14 +3483,15 @@ function generate() {
   inv[0] = baseItem('stick'); discover(inv[0]);
   player.pos.set(0, getH(0, 0), 0);
   camTarget.set(0, getH(0, 0) + 1.6, 0);
+  baseChestCount = chests.length; H0 = H.slice(); if (SAVE) { try { applySave(SAVE); } catch (e) { console.error('save load failed', e); } }
   buildMapImg(); renderInv(); drawMinimap();
-  const b = document.getElementById('playBtn'); b.disabled = false; b.textContent = '▶ Play';
+  const b = document.getElementById('playBtn'); b.disabled = false; b.textContent = SAVE ? `▶ Continue — Day ${SAVE.day}` : '▶ Play'; if (SAVE) document.getElementById('newWorldBtn').style.display = '';
 }
 document.getElementById('playBtn').onclick = () => {
   try { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); mrand.s = 1 + Math.floor(Math.random() * 1e6); newSection(); initMusic(); } catch (e) { }
   document.getElementById('startScreen').style.display = 'none'; state = 'play'; camYaw = Math.PI; camPitch = 0; last = performance.now();
   if (!isTouch) tryLock();
-  toast('Grab the 🏹 and 🗡️, then drag one onto the other!', 3500);
+  toast(SAVE ? '🛏️ Welcome back! Your saved game continues.' : 'Grab the 🏹 and 🗡️, then drag one onto the other!<br>🛏️ Sleep in a bed inside a house to save.', 4000);
 };
 applySettings();
 requestAnimationFrame(loop);
