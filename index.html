@@ -94,6 +94,12 @@
   .combo .ing { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; font-weight: 800; opacity: .9; }
   .combo .ing img { width: 34px; height: 34px; }
   .combo b { color: #7affd0; } .combo div.d { font-size: 13px; opacity: .85; }
+  #bossbar { position: fixed; left: 50%; bottom: 74px; transform: translateX(-50%); width: min(520px, 62vw); z-index: 5; pointer-events: none; display: none; text-align: center; }
+  #bossbar .bn { font-weight: 800; font-size: 16px; letter-spacing: 1px; color: #ffd0c0; text-shadow: 0 2px 4px #000, 0 0 10px #ff3020; }
+  #bossbar .bb { height: 14px; margin-top: 3px; background: rgba(30,8,10,.8); border: 2px solid #c8a040; border-radius: 8px; overflow: hidden; box-shadow: 0 0 12px #ff302088; }
+  #bossbar .bf { height: 100%; width: 100%; background: linear-gradient(90deg,#a01020,#ff4030,#ff9040); transition: width .12s; }
+  #bossbar.rage .bf { background: linear-gradient(90deg,#ff1030,#ff60a0,#ff1030); }
+  #bossbar .ba { font-size: 12px; color: #ffe0a0; margin-top: 2px; min-height: 15px; text-shadow: 0 1px 3px #000; }
   .ctl-more { margin-bottom: 18px; } .ctl-more summary { cursor: pointer; opacity: .75; font-size: 14px; margin-bottom: 8px; } .ctl-more .ctl { margin-bottom: 0; }
   /* phones & small windows: compact HUD so more of the world is visible */
   @media (max-width: 640px), (max-height: 520px) {
@@ -103,6 +109,7 @@
     #joy { width: 110px; height: 110px; left: 16px; bottom: 16px; } #knob { left: 30px; top: 30px; }
     #btns { transform: scale(.82); transform-origin: bottom right; right: 12px; bottom: 12px; }
     #toasts { top: 36%; }
+    #bossbar { bottom: auto; top: calc(var(--slot) + 22px); width: min(360px, 46vw); } #bossbar .bn { font-size: 12px; } #bossbar .bb { height: 9px; } #bossbar .ba { font-size: 10px; }
   }
   @media (max-height: 520px) {
     .screen h1 { font-size: 34px; } .screen p { font-size: 12px; margin: 6px 0; } .ctl { font-size: 11px; padding: 6px 12px; margin-bottom: 10px; }
@@ -133,6 +140,7 @@
 <div id="joy"><div id="knob"></div></div>
 <div id="btns"><div class="btn" id="bAtk">⚔️</div><div class="btn" id="bJump">⤒</div><div class="btn" id="bDash">🚀</div><div class="btn" id="bAbil">✨</div></div>
 <div id="abil"></div>
+<div id="bossbar"><div class="bn"></div><div class="bb"><div class="bf"></div></div><div class="ba"></div></div>
 <div id="help">WASD move · Click attack · Esc → drag to merge</div>
 
 <div class="screen" id="startScreen"><div class="panel">
@@ -256,8 +264,76 @@ skyLight.castShadow = true;
   skyLight.shadow.mapSize.set(isTouch ? 1024 : 2048, isTouch ? 1024 : 2048); skyLight.shadow.bias = -0.0006; }
 scene.add(skyLight, skyLight.target);
 
+// ============================================================ realistic surfaces: textures are generated in code (no image files to download)
+const LOWGFX = isTouch; // phones/tablets: same look, lighter on detail counts
+const trand = mulberry32(90210);
+function tileField(S, f) { // seamless value noise
+  const g = new Float32Array(f * f); for (let i = 0; i < g.length; i++) g[i] = trand() * 2 - 1; const out = new Float32Array(S * S);
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) { const fx = x / S * f, fy = y / S * f, x0 = Math.floor(fx), y0 = Math.floor(fy), tx = fade(fx - x0), ty = fade(fy - y0), x1 = (x0 + 1) % f, y1 = (y0 + 1) % f;
+    out[y * S + x] = lerp(lerp(g[y0 * f + x0], g[y0 * f + x1], tx), lerp(g[y1 * f + x0], g[y1 * f + x1], tx), ty); } return out; }
+function fbmField(S, octs, gain = .55) { const out = new Float32Array(S * S); let a = 1, tot = 0; for (const f of octs) { const fl = tileField(S, f); for (let i = 0; i < out.length; i++) out[i] += fl[i] * a; tot += a; a *= gain; } for (let i = 0; i < out.length; i++) out[i] /= tot; return out; }
+function makeTex(S, draw, rep = 1) { const c = document.createElement('canvas'); c.width = c.height = S; draw(c.getContext('2d'), S); const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rep, rep); t.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy()); return t; }
+function fieldTo(x, S, F, lo, hi, tint = [1, 1, 1]) { const img = x.createImageData(S, S); for (let i = 0; i < S * S; i++) { const v = clamp(lo + (hi - lo) * (F[i] * .5 + .5), 0, 255);
+  img.data[i * 4] = v * tint[0]; img.data[i * 4 + 1] = v * tint[1]; img.data[i * 4 + 2] = v * tint[2]; img.data[i * 4 + 3] = 255; } x.putImageData(img, 0, 0); }
+const TEX = {};
+TEX.grain = makeTex(128, (x, S) => fieldTo(x, S, fbmField(S, [8, 16, 32, 64], .7), 190, 262));
+TEX.ground = makeTex(256, (x, S) => { fieldTo(x, S, fbmField(S, [4, 8, 16, 32, 64, 128], .62), 150, 275);
+  for (let k = 0; k < 900; k++) { const v = trand(); x.fillStyle = v < .5 ? `rgba(40,30,20,${.12 + trand() * .2})` : `rgba(255,255,230,${.05 + trand() * .1})`; x.fillRect(trand() * S, trand() * S, 1 + trand() * 2, 1 + trand() * 2); } });
+TEX.bark = makeTex(128, (x, S) => { x.fillStyle = '#c8c8c8'; x.fillRect(0, 0, S, S);
+  for (let k = 0; k < 140; k++) { const px = trand() * S, w = 1 + trand() * 3; x.fillStyle = `rgba(30,22,16,${.15 + trand() * .35})`; x.fillRect(px, 0, w, S); x.fillStyle = `rgba(255,255,255,${trand() * .12})`; x.fillRect(px + w, 0, 1, S); }
+  for (let k = 0; k < 40; k++) { x.fillStyle = `rgba(20,15,10,${.2 + trand() * .3})`; x.beginPath(); x.ellipse(trand() * S, trand() * S, 1 + trand() * 3, 4 + trand() * 10, 0, 0, 7); x.fill(); } });
+TEX.leaf = makeTex(128, (x, S) => { x.fillStyle = '#b8b8b8'; x.fillRect(0, 0, S, S);
+  for (let k = 0; k < 520; k++) { const v = 120 + trand() * 135; x.fillStyle = `rgb(${v * .9},${v},${v * .85})`; x.save(); x.translate(trand() * S, trand() * S); x.rotate(trand() * 6.28); x.beginPath(); x.ellipse(0, 0, 2 + trand() * 3, 5 + trand() * 4, 0, 0, 7); x.fill(); x.restore(); } }, 2);
+TEX.rock = makeTex(128, (x, S) => { fieldTo(x, S, fbmField(S, [4, 8, 16, 32, 64], .65), 120, 265);
+  x.strokeStyle = 'rgba(30,28,26,.35)'; for (let k = 0; k < 14; k++) { x.lineWidth = .6 + trand(); x.beginPath(); let px = trand() * S, py = trand() * S; x.moveTo(px, py); for (let s = 0; s < 6; s++) { px += (trand() - .5) * 24; py += (trand() - .5) * 24; x.lineTo(px, py); } x.stroke(); } });
+TEX.skin = makeTex(128, (x, S) => { fieldTo(x, S, fbmField(S, [4, 8, 16, 32], .6), 165, 265);
+  for (let k = 0; k < 700; k++) { x.fillStyle = `rgba(0,0,0,${.06 + trand() * .12})`; x.beginPath(); x.arc(trand() * S, trand() * S, .6 + trand() * 1.6, 0, 7); x.fill(); }
+  for (let k = 0; k < 60; k++) { x.fillStyle = `rgba(60,30,20,${trand() * .15})`; x.beginPath(); x.arc(trand() * S, trand() * S, 4 + trand() * 10, 0, 7); x.fill(); } });
+TEX.wood = makeTex(128, (x, S) => { const F = fbmField(S, [4, 8, 16], .5); const img = x.createImageData(S, S);
+  for (let i = 0; i < S; i++) for (let j = 0; j < S; j++) { const q = i * S + j, v = 200 + 45 * Math.sin((j / S * 28 + F[q] * 6) * Math.PI); img.data[q * 4] = v; img.data[q * 4 + 1] = v * .92; img.data[q * 4 + 2] = v * .85; img.data[q * 4 + 3] = 255; } x.putImageData(img, 0, 0); });
+TEX.metal = makeTex(128, (x, S) => { x.fillStyle = '#e0e0e0'; x.fillRect(0, 0, S, S); for (let k = 0; k < 400; k++) { x.fillStyle = `rgba(${trand() < .5 ? '0,0,0' : '255,255,255'},${trand() * .08})`; x.fillRect(0, trand() * S, S, 1); } });
+TEX.waterN = makeTex(256, (x, S) => { const F = fbmField(S, [4, 8, 16, 32], .5), img = x.createImageData(S, S);
+  for (let i = 0; i < S; i++) for (let j = 0; j < S; j++) { const q = i * S + j, dx = F[i * S + (j + 1) % S] - F[i * S + (j + S - 1) % S], dy = F[((i + 1) % S) * S + j] - F[((i + S - 1) % S) * S + j];
+    const nx = -dx * 6, ny = -dy * 6, l = Math.hypot(nx, ny, 1); img.data[q * 4] = (nx / l * .5 + .5) * 255; img.data[q * 4 + 1] = (ny / l * .5 + .5) * 255; img.data[q * 4 + 2] = (1 / l * .5 + .5) * 255; img.data[q * 4 + 3] = 255; } x.putImageData(img, 0, 0); }, 70);
+TEX.grass = (() => { const c = document.createElement('canvas'); c.width = 64; c.height = 64; const x = c.getContext('2d');
+  for (let k = 0; k < 22; k++) { const bx = 4 + trand() * 56, h = 30 + trand() * 32, lean = (trand() - .5) * 18, w = 2 + trand() * 2.5, v = 150 + trand() * 105;
+    x.fillStyle = `rgb(${v * .8},${v},${v * .7})`; x.beginPath(); x.moveTo(bx - w, 64); x.quadraticCurveTo(bx + lean * .3, 64 - h * .6, bx + lean, 64 - h); x.quadraticCurveTo(bx + lean * .3 + w * .4, 64 - h * .6, bx + w, 64); x.fill(); }
+  const t = new THREE.CanvasTexture(c); return t; })();
 const matCache = {};
-function mat(color, opts) { const k = color + (opts ? JSON.stringify(opts) : ''); return matCache[k] || (matCache[k] = new THREE.MeshStandardMaterial(Object.assign({ color, roughness: .85, flatShading: true }, opts || {}))); }
+// every solid surface gets fine grain + bump so it reads as stone / wood / cloth instead of flat plastic
+const optKey = o => o ? Object.keys(o).map(q => q + ':' + (o[q] && o[q].isTexture ? o[q].uuid : o[q] && o[q].isColor ? o[q].getHex() : String(o[q]))).join(',') : '';
+function mat(color, opts) { const k = color + optKey(opts); return matCache[k] || (matCache[k] = new THREE.MeshStandardMaterial(Object.assign({ color, roughness: .82, map: TEX.grain, bumpMap: TEX.grain, bumpScale: .012 }, opts || {}))); }
+// sky dome with a real gradient and sun glow (tone-mapped like the world, so the horizon matches the fog)
+const skyMat = new THREE.ShaderMaterial({ side: THREE.BackSide, depthWrite: false, fog: false,
+  uniforms: { top: { value: new THREE.Color(0x3a7bd5) }, hor: { value: new THREE.Color(0xbfe0ff) }, sunC: { value: new THREE.Color(0xffe0a0) }, sunD: { value: new V3(0, 1, 0) } },
+  vertexShader: 'varying vec3 vD; void main(){ vD = normalize(position); vec4 p = modelViewMatrix * vec4(position, 1.); gl_Position = projectionMatrix * p; }',
+  fragmentShader: 'uniform vec3 top; uniform vec3 hor; uniform vec3 sunC; uniform vec3 sunD; varying vec3 vD; void main(){ float h = vD.y; vec3 c = mix(hor, top, pow(clamp(h, 0., 1.), .5)); c = mix(c, hor * .75, clamp(-h * 4., 0., 1.)); float s = max(dot(normalize(vD), normalize(sunD)), 0.); c += sunC * (pow(s, 6.) * .28 + pow(s, 80.) * .9); gl_FragColor = vec4(c, 1.);\n#include <tonemapping_fragment>\n}' });
+const skyDome = new THREE.Mesh(new THREE.SphereGeometry(1000, 32, 16), skyMat); skyDome.renderOrder = -10; scene.add(skyDome);
+// image-based lighting: metals, water and wet surfaces reflect the current sky
+// (painted as a small sky/ground gradient picture, then pre-blurred by three.js for rough + shiny surfaces)
+const pmrem = new THREE.PMREMGenerator(renderer), envCv = document.createElement('canvas'); envCv.width = 128; envCv.height = 64;
+const envGround = { material: { color: new THREE.Color(0x3a4a2a) } };
+let envRT = null;
+function updateEnv() {
+  const x = envCv.getContext('2d'), css = c => `rgb(${Math.round(clamp(c.r, 0, 1) * 255)},${Math.round(clamp(c.g, 0, 1) * 255)},${Math.round(clamp(c.b, 0, 1) * 255)})`;
+  const top = skyMat.uniforms.top.value, hor = skyMat.uniforms.hor.value, gc = envGround.material.color, sc = skyMat.uniforms.sunC.value, sd = skyMat.uniforms.sunD.value;
+  const g = x.createLinearGradient(0, 0, 0, 64); g.addColorStop(0, css(top)); g.addColorStop(.47, css(hor)); g.addColorStop(.53, css(gc.clone().lerp(hor, .3))); g.addColorStop(1, css(gc)); x.fillStyle = g; x.fillRect(0, 0, 128, 64);
+  if (sd.y > -.1) { const u = (Math.atan2(sd.x, -sd.z) / (Math.PI * 2) + .5) * 128, v = (.5 - Math.asin(clamp(sd.y, -1, 1)) / Math.PI) * 64, rg = x.createRadialGradient(u, v, 0, u, v, 14);
+    rg.addColorStop(0, css(sc.clone().multiplyScalar(1.4).add(hor))); rg.addColorStop(1, 'rgba(255,255,255,0)'); x.fillStyle = rg; x.fillRect(0, 0, 128, 64); }
+  const tex = new THREE.CanvasTexture(envCv); tex.mapping = THREE.EquirectangularReflectionMapping;
+  const rt = pmrem.fromEquirectangular(tex); tex.dispose(); if (envRT) envRT.dispose(); envRT = rt; scene.environment = rt.texture; vmScene.environment = rt.texture; }
+const texRepC = {};
+function texRep(t, n) { const k = t.uuid + n; if (texRepC[k]) return texRepC[k]; const c = t.clone(); c.repeat.set(n, n); c.needsUpdate = true; return texRepC[k] = c; }
+// merge simple geometries into one (for trees, rocks and bosses)
+function mergeGeos(list) { let nv = 0, ni = 0; for (const g of list) { nv += g.attributes.position.count; ni += g.index ? g.index.count : g.attributes.position.count; }
+  const pos = new Float32Array(nv * 3), nor = new Float32Array(nv * 3), uv = new Float32Array(nv * 2), idx = new Uint32Array(ni); let vo = 0, io = 0;
+  for (const g of list) { const c = g.attributes.position.count; pos.set(g.attributes.position.array, vo * 3); nor.set(g.attributes.normal.array, vo * 3); if (g.attributes.uv) uv.set(g.attributes.uv.array, vo * 2);
+    if (g.index) for (let k = 0; k < g.index.count; k++) idx[io++] = g.index.array[k] + vo; else for (let k = 0; k < c; k++) idx[io++] = k + vo; vo += c; }
+  const m = new THREE.BufferGeometry(); m.setAttribute('position', new THREE.BufferAttribute(pos, 3)); m.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); m.setAttribute('uv', new THREE.BufferAttribute(uv, 2)); m.setIndex(new THREE.BufferAttribute(idx, 1)); return m; }
+// lumpy organic shapes: push vertices in/out with noise (same position = same push, so no cracks)
+function lumpy(geo, amt, f = 1.3, seed = 0) { const p = geo.attributes.position; for (let i = 0; i < p.count; i++) { const x = p.getX(i), y = p.getY(i), z = p.getZ(i), l = Math.hypot(x, y, z) || 1;
+  const n = noise(x * f + seed, z * f + y * .7 + seed * 1.7) * amt; p.setXYZ(i, x + x / l * n, y + y / l * n, z + z / l * n); } geo.computeVertexNormals(); return geo; }
 function mesh(geo, color, opts, parent, x = 0, y = 0, z = 0, shadow = true) {
   const m = new THREE.Mesh(geo, color instanceof THREE.Material ? color : mat(color, opts));
   m.position.set(x, y, z); if (shadow) { m.castShadow = true; m.receiveShadow = true; } if (parent) parent.add(m); return m;
@@ -369,37 +445,61 @@ function buildTerrain() {
   for (let k = 0; k < 8; k++) { const a = rand() * 6.28, d = R(60, 180); craters.push({ x: Math.cos(a) * d, z: Math.sin(a) * d, r: R(9, 17), d: R(7, 12) }); }
   for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) H[i * N + j] = rawHeight(-HALF + j * STEP, -HALF + i * STEP);
   planZones();
-  const pos = new Float32Array(SEG * SEG * 18), col = new Float32Array(SEG * SEG * 18);
-  let p = 0;
-  const cA = new V3(), cB = new V3(), cC = new V3(), e1 = new V3(), e2 = new V3();
-  const tri = (x1, z1, x2, z2, x3, z3, h1, h2, h3) => {
-    cA.set(x1, h1, z1); cB.set(x2, h2, z2); cC.set(x3, h3, z3);
-    e1.subVectors(cB, cA); e2.subVectors(cC, cA); const n = e1.cross(e2).normalize(); const ny = Math.abs(n.y);
-    const h = (h1 + h2 + h3) / 3, cx = (x1 + x2 + x3) / 3, cz = (z1 + z2 + z3) / 3;
-    const v = noise(cx * .04, cz * .04) * .5 + rand() * .05;
-    let r, g, b;
-    const bc = biomeColor(cx, cz, h, v);
-    if (bc) [r, g, b] = bc;
-    else if (h < WATER + 1.3) { r = .86; g = .8; b = .56; }
-    else if (h > 44 + v * 10) { r = .95; g = .97; b = 1; }
-    else if (ny < .7 || h > 32 + v * 8) { r = .5 + v * .2; g = .48 + v * .2; b = .46 + v * .2; }
-    else { const t = clamp(v + .5, 0, 1); r = lerp(.3, .55, t); g = lerp(.58, .74, t); b = lerp(.22, .3, t); if (h > 24) { r += .05; g -= .05; } }
-    for (const c of [cA, cB, cC]) { pos[p] = c.x; pos[p + 1] = c.y; pos[p + 2] = c.z; col[p] = r; col[p + 1] = g; col[p + 2] = b; p += 3; }
-  };
-  for (let i = 0; i < SEG; i++) for (let j = 0; j < SEG; j++) {
-    const x0 = -HALF + j * STEP, x1 = x0 + STEP, z0 = -HALF + i * STEP, z1 = z0 + STEP;
-    const a = H[i * N + j], b = H[i * N + j + 1], c = H[(i + 1) * N + j], d = H[(i + 1) * N + j + 1];
-    tri(x0, z0, x0, z1, x1, z0, a, c, b);
-    tri(x1, z0, x0, z1, x1, z1, b, c, d);
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  geo.computeVertexNormals(); world.terrainGeo = geo;
-  const t = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: .95 }));
-  t.receiveShadow = true; scene.add(t);
-  const water = new THREE.Mesh(new THREE.PlaneGeometry(WORLD * 3, WORLD * 3), new THREE.MeshStandardMaterial({ color: 0x3a9ad9, transparent: true, opacity: .75, roughness: .15, metalness: .1 }));
+  const geo = new THREE.BufferGeometry(), n6 = SEG * SEG * 18;
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n6), 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(n6), 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(n6), 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(SEG * SEG * 12), 2));
+  world.terrainGeo = geo;
+  for (let i = 0; i < N * N; i++) vertCol(i);
+  for (let i = 0; i < SEG; i++) for (let j = 0; j < SEG; j++) writeCell(i, j);
+  const t = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, map: TEX.ground, bumpMap: TEX.ground, bumpScale: .06, roughness: .93 }));
+  TEX.ground.repeat.set(1, 1); t.receiveShadow = true; scene.add(t);
+  // water: deep tint, moving ripples and real sky reflections
+  const water = new THREE.Mesh(new THREE.PlaneGeometry(WORLD * 3, WORLD * 3), new THREE.MeshStandardMaterial({ color: 0x1f5f78, transparent: true, opacity: .84, roughness: .06, metalness: .25, normalMap: TEX.waterN, normalScale: new THREE.Vector2(.55, .55), envMapIntensity: 1.2 }));
   water.rotation.x = -Math.PI / 2; water.position.y = WATER; scene.add(water); world.water = water;
+}
+// ---- terrain shading: smooth normals from the heightmap + colours blended per vertex (no hard triangle edges)
+const vNrm = new Float32Array(N * N * 3), vCol = new Float32Array(N * N * 3), dirt = new Float32Array(N * N);
+function vertCol(idx) {
+  const i = Math.floor(idx / N), j = idx % N, x = -HALF + j * STEP, z = -HALF + i * STEP, h = H[idx];
+  const l = H[i * N + Math.max(0, j - 1)], r = H[i * N + Math.min(SEG, j + 1)], u = H[Math.max(0, i - 1) * N + j], d = H[Math.min(SEG, i + 1) * N + j];
+  let nx = l - r, ny = 2 * STEP, nz = u - d; const nl = Math.hypot(nx, ny, nz); nx /= nl; ny /= nl; nz /= nl; vNrm[idx * 3] = nx; vNrm[idx * 3 + 1] = ny; vNrm[idx * 3 + 2] = nz;
+  const v = noise(x * .04, z * .04) * .5, v2 = noise(x * .21 + 9, z * .21 - 3) * .5;
+  // grass: lush green in low ground, drier olive higher up, patchy
+  const dry = clamp(v * 1.2 + .45 + (h - 10) * .012, 0, 1);
+  let c0 = lerp(.16, .36, dry) + v2 * .05, c1 = lerp(.34, .42, dry) + v2 * .05, c2 = lerp(.1, .16, dry);
+  // rock on steep slopes and high up
+  const rockT = Math.max(smooth(.86, .7, ny), smooth(30, 38, h + v * 8)), rk = .36 + v * .14 + v2 * .06;
+  c0 = lerp(c0, rk * 1.02, rockT); c1 = lerp(c1, rk, rockT); c2 = lerp(c2, rk * .94, rockT);
+  // snow caps (only where it can settle)
+  const snowT = smooth(42, 49, h + v * 12) * smooth(.55, .75, ny); c0 = lerp(c0, .9, snowT); c1 = lerp(c1, .93, snowT); c2 = lerp(c2, .97, snowT);
+  // beaches and wet mud under water
+  const sandT = smooth(WATER + 2, WATER + .8, h); c0 = lerp(c0, .7 + v2 * .05, sandT); c1 = lerp(c1, .62 + v2 * .05, sandT); c2 = lerp(c2, .44, sandT);
+  const wetT = smooth(WATER + .2, WATER - 2, h); c0 = lerp(c0, .36, wetT); c1 = lerp(c1, .34, wetT); c2 = lerp(c2, .26, wetT);
+  // biomes fade in at their edges
+  for (const b of biomes) { const bd = Math.hypot(x - b.x, z - b.z); if (bd > b.r + 5) continue; const bc = biomeTint(b, bd, h, v); if (!bc) continue;
+    const t = smooth(b.r + 5, b.r - 4, bd); c0 = lerp(c0, bc[0], t); c1 = lerp(c1, bc[1], t); c2 = lerp(c2, bc[2], t); }
+  // freshly dug earth
+  if (dirt[idx] > 0) { const t = dirt[idx]; c0 = lerp(c0, .3 + v2 * .05, t); c1 = lerp(c1, .22, t); c2 = lerp(c2, .15, t); }
+  vCol[idx * 3] = c0; vCol[idx * 3 + 1] = c1; vCol[idx * 3 + 2] = c2;
+}
+function biomeTint(b, d, h, v) {
+  if (b.type === 'volcano') return d < 11 ? [.42 + v * .2, .14, .06] : [.16 + v * .08, .14 + v * .06, .13 + v * .06];
+  if (h < WATER + 1.3) return null;
+  if (b.type === 'desert') return [.78 + v * .08, .64 + v * .07, .42 + v * .05];
+  if (b.type === 'tundra') return [.86 + v * .06, .9 + v * .04, .96];
+  if (b.type === 'mushroom') return [.34 + v * .12, .24 + v * .08, .44 + v * .12];
+  if (b.type === 'sky') return [.26 + v * .1, .5 + v * .08, .2 + v * .06];
+  return null;
+}
+function writeCell(i, j) {
+  const g = world.terrainGeo, pos = g.attributes.position.array, nor = g.attributes.normal.array, col = g.attributes.color.array, uv = g.attributes.uv.array;
+  const b = (i * SEG + j) * 18, ub = (i * SEG + j) * 12;
+  const vs = [i * N + j, (i + 1) * N + j, i * N + j + 1, i * N + j + 1, (i + 1) * N + j, (i + 1) * N + j + 1];
+  for (let q = 0; q < 6; q++) { const idx = vs[q], vi = Math.floor(idx / N), vj = idx % N, x = -HALF + vj * STEP, z = -HALF + vi * STEP, o = b + q * 3;
+    pos[o] = x; pos[o + 1] = H[idx]; pos[o + 2] = z; nor[o] = vNrm[idx * 3]; nor[o + 1] = vNrm[idx * 3 + 1]; nor[o + 2] = vNrm[idx * 3 + 2];
+    col[o] = vCol[idx * 3]; col[o + 1] = vCol[idx * 3 + 1]; col[o + 2] = vCol[idx * 3 + 2]; uv[ub + q * 2] = x / 7; uv[ub + q * 2 + 1] = z / 7; }
 }
 const world = {};
 
@@ -483,9 +583,10 @@ const yb = (c, y0, y1) => { c.minY = y0; c.maxY = y1; return c; }; // collision 
 const lavaPools = []; // {x, z, y, r}: standing in these burns
 function buildCaveZone(Z) {
   const { x, z, r, floor: fy, ht } = Z, T = CAVE_T[Z.type], g = new THREE.Group(); g.position.set(x, fy, z); scene.add(g); Z.group = g; g.visible = false;
-  const fl = new THREE.Mesh(new THREE.CircleGeometry(r + 1.5, 48).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: T.floor, flatShading: true, roughness: 1 })); fl.receiveShadow = true; g.add(fl);
-  g.add(new THREE.Mesh(new THREE.CylinderGeometry(r + 1.5, r + 1.5, ht + .5, 48, 3, true).translate(0, ht / 2, 0), new THREE.MeshStandardMaterial({ color: T.wall, side: THREE.BackSide, flatShading: true, roughness: 1 })));
-  g.add(new THREE.Mesh(new THREE.CircleGeometry(r + 1.5, 48).rotateX(Math.PI / 2).translate(0, ht, 0), new THREE.MeshStandardMaterial({ color: T.ceil, flatShading: true, roughness: 1 })));
+  const rk8 = texRep(TEX.rock, 9), rkW = texRep(TEX.rock, 14);
+  const fl = new THREE.Mesh(new THREE.CircleGeometry(r + 1.5, 48).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: T.floor, map: rk8, bumpMap: rk8, bumpScale: .08, roughness: Z.type === 'ice' ? .25 : .95 })); fl.receiveShadow = true; g.add(fl);
+  g.add(new THREE.Mesh(lumpy(new THREE.CylinderGeometry(r + 1.5, r + 1.5, ht + .5, 64, 8, true).translate(0, ht / 2, 0), .9, .35, 11), new THREE.MeshStandardMaterial({ color: T.wall, side: THREE.BackSide, map: rkW, bumpMap: rkW, bumpScale: .1, roughness: .95 })));
+  g.add(new THREE.Mesh(new THREE.CircleGeometry(r + 1.5, 48).rotateX(Math.PI / 2).translate(0, ht, 0), new THREE.MeshStandardMaterial({ color: T.ceil, map: rk8, bumpMap: rk8, bumpScale: .1, roughness: 1 })));
   const rockC = T.rocks, gem = T.gems, ea = rand() * 6.28, ox = Math.cos(ea) * 11, oz = Math.sin(ea) * 11; Z.exit = { x: x + ox, z: z + oz }; // the climb-out shaft is off to one side
   for (let k = 0; k < 40; k++) { const a = k / 40 * Math.PI * 2, rr = R(2, 3.6); // lumpy walls
     const m = mesh(new THREE.DodecahedronGeometry(rr, 0), pick(rockC), null, g, Math.cos(a) * (r + .6), R(0, ht), Math.sin(a) * (r + .6), false); m.scale.y = 1.6; m.rotation.set(rand() * 3, rand() * 3, rand() * 3); }
@@ -633,22 +734,35 @@ function buildNature() {
   for (let k = 0; k < 300; k++) { const s = landSpot(WATER + 1.5, 38, .65, 1.5); if (okTree(s)) { s.s = R(.8, 1.6); pines.push(s); circles.push({ x: s.x, z: s.z, r: .42 * s.s, nature: true }); } }
   for (let k = 0; k < 230; k++) { const s = landSpot(WATER + 1.5, 26, .5, 1.5); if (okTree(s)) { s.s = R(.8, 1.5); rounds.push(s); circles.push({ x: s.x, z: s.z, r: .42 * s.s, nature: true }); } }
   for (let k = 0; k < 170; k++) { const s = landSpot(WATER - 2, 60, 2, 1); if (s && Math.hypot(s.x, s.z) > 7) { s.s = R(.5, 2.4); rocks.push(s); if (s.s > .7) circles.push({ x: s.x, z: s.z, r: s.s * .85, nature: true }); } }
-  for (let k = 0; k < 1800; k++) { const s = landSpot(WATER + 1.4, 26, .6, 0, 0, 5); if (s) tufts.push(s); }
-  const white = new THREE.MeshStandardMaterial({ color: 0xffffff, flatShading: true, roughness: .9 });
-  instanced(new THREE.CylinderGeometry(.18, .28, 2, 6).translate(0, 1, 0), white, pines, (d, o, c) => { o.position.set(d.x, d.h - .1, d.z); o.scale.setScalar(d.s); c.setHex(0x6b4423); });
-  instanced(new THREE.ConeGeometry(1.5, 4.2, 7).translate(0, 3.8, 0), white, pines, (d, o, c) => { o.position.set(d.x, d.h - .1, d.z); o.scale.setScalar(d.s); o.rotation.y = rand() * 3; c.setHSL(.33 + R(-.03, .03), .5, .22 + R(0, .08)); });
-  instanced(new THREE.CylinderGeometry(.2, .3, 2.2, 6).translate(0, 1.1, 0), white, rounds, (d, o, c) => { o.position.set(d.x, d.h - .1, d.z); o.scale.setScalar(d.s); c.setHex(0x7a5230); });
-  instanced(new THREE.IcosahedronGeometry(1.7, 0).translate(0, 3.2, 0), white, rounds, (d, o, c) => { o.position.set(d.x, d.h - .1, d.z); o.scale.setScalar(d.s); o.rotation.set(rand(), rand() * 3, rand());
-    if (rand() < .12) c.setHSL(R(.02, .1), .75, .55); else c.setHSL(.26 + R(-.04, .05), .55, .33 + R(0, .1)); });
-  instanced(new THREE.DodecahedronGeometry(1, 0), white, rocks, (d, o, c) => { o.position.set(d.x, d.h + d.s * .25, d.z); o.scale.set(d.s, d.s * R(.6, 1), d.s); o.rotation.set(rand() * 3, rand() * 3, rand() * 3); const v = R(.38, .55); c.setRGB(v, v * .97, v * .94); });
-  const tm = instanced(new THREE.ConeGeometry(.12, .5, 4).translate(0, .25, 0), white, tufts, (d, o, c) => { o.position.set(d.x + R(-1, 1), getH(d.x, d.z) - .05, d.z + R(-1, 1)); o.scale.setScalar(R(.7, 1.5));
-    if (rand() < .25) { c.setHSL(pick([0, .12, .6, .8, .15]), .85, .65); o.scale.set(1.6, .8, 1.6); } else c.setHSL(.28, .55, .35 + R(0, .1)); });
+  for (let k = 0; k < (LOWGFX ? 2200 : 3600); k++) { const s = landSpot(WATER + 1.4, 26, .6, 0, 0, 5); if (s) tufts.push(s); }
+  const barkM = new THREE.MeshStandardMaterial({ color: 0xffffff, map: TEX.bark, bumpMap: TEX.bark, bumpScale: .05, roughness: .95 });
+  const leafM = new THREE.MeshStandardMaterial({ color: 0xffffff, map: TEX.leaf, bumpMap: TEX.leaf, bumpScale: .04, roughness: .85 });
+  const rockM = new THREE.MeshStandardMaterial({ color: 0xffffff, map: TEX.rock, bumpMap: TEX.rock, bumpScale: .06, roughness: .9 });
+  // pines: tapered trunk + four drooping layers of needles
+  const pineTop = mergeGeos([[1.9, 2, 1.6], [1.55, 1.9, 2.7], [1.15, 1.8, 3.8], [.7, 1.6, 4.9]].map(([r, h, y], q) => lumpy(new THREE.ConeGeometry(r, h, LOWGFX ? 8 : 10, 2).translate(0, y, 0), .16, 1.8, q * 3)));
+  instanced(new THREE.CylinderGeometry(.13, .3, 5, 8).translate(0, 2.5, 0), barkM, pines, (d, o, c) => { o.position.set(d.x, d.h - .2, d.z); o.scale.setScalar(d.s); c.setRGB(.45, .33, .24); });
+  instanced(pineTop, leafM, pines, (d, o, c) => { o.position.set(d.x, d.h - .2, d.z); o.scale.setScalar(d.s); o.rotation.y = rand() * 6; c.setHSL(.3 + R(-.03, .03), .45, .16 + R(0, .06)); });
+  // broadleaf trees: trunk with two branches + a cloud of leafy clumps
+  const oakTrunk = mergeGeos([new THREE.CylinderGeometry(.18, .34, 2.8, 8).translate(0, 1.4, 0), new THREE.CylinderGeometry(.07, .13, 1.6, 6).rotateZ(.8).translate(.5, 2.7, 0), new THREE.CylinderGeometry(.07, .12, 1.4, 6).rotateZ(-.9).translate(-.45, 2.6, .1)]);
+  const oakTop = mergeGeos([[0, 3.6, 0, 1.55], [.9, 3.2, .4, 1.1], [-.9, 3.3, -.3, 1.15], [.2, 4.3, -.5, 1.05], [-.3, 3.0, .9, 1], [.4, 3.4, -1, 1]].map(([x, y, z, r], q) => lumpy(new THREE.SphereGeometry(r, LOWGFX ? 8 : 10, LOWGFX ? 6 : 7).translate(x, y, z), .22, 1.6, q * 5)));
+  instanced(oakTrunk, barkM, rounds, (d, o, c) => { o.position.set(d.x, d.h - .1, d.z); o.scale.setScalar(d.s); o.rotation.y = rand() * 6; c.setRGB(.5, .38, .27); });
+  instanced(oakTop, leafM, rounds, (d, o, c) => { o.position.set(d.x, d.h - .1, d.z); o.scale.setScalar(d.s); o.rotation.y = rand() * 6;
+    if (rand() < .1) c.setHSL(R(.05, .11), .7, .4); else c.setHSL(.25 + R(-.04, .05), .5, .22 + R(0, .08)); });
+  // boulders: rounded, cracked, half-buried
+  instanced(lumpy(new THREE.SphereGeometry(1, 12, 9), .28, 1.1, 7), rockM, rocks, (d, o, c) => { o.position.set(d.x, d.h + d.s * .1, d.z); o.scale.set(d.s, d.s * R(.55, .9), d.s * R(.8, 1.1)); o.rotation.set(rand() * .4, rand() * 6, rand() * .4); const v = R(.5, .7); c.setRGB(v, v * .97, v * .92); });
+  // grass: crossed blade cards that catch the light from above
+  const gq = new THREE.PlaneGeometry(1.1, .75).translate(0, .37, 0), gq2 = gq.clone().rotateY(Math.PI / 2), gq3 = gq.clone().rotateY(Math.PI / 4);
+  const grassGeo = mergeGeos([gq, gq2, gq3]); { const nr = grassGeo.attributes.normal; for (let i = 0; i < nr.count; i++) nr.setXYZ(i, 0, 1, 0); }
+  const grassM = new THREE.MeshStandardMaterial({ color: 0xffffff, map: TEX.grass, alphaTest: .45, side: THREE.DoubleSide, roughness: .9 });
+  const tm = instanced(grassGeo, grassM, tufts, (d, o, c) => { o.position.set(d.x + R(-1, 1), getH(d.x, d.z) - .08, d.z + R(-1, 1)); o.scale.setScalar(R(.8, 1.6)); o.rotation.y = rand() * 6;
+    if (rand() < .05) { c.setHSL(pick([.13, .15, .0, .08]), .45, .55); o.scale.multiplyScalar(.6); } else c.setHSL(.24 + R(-.03, .05), .45, .3 + R(0, .1)); });
   tm.castShadow = false;
-  // clouds
+  // clouds: soft puffy clusters
   world.clouds = [];
-  const cm = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: .92 });
-  for (let k = 0; k < 26; k++) { const cg = new THREE.Group(); const n = 3 + Math.floor(rand() * 4);
-    for (let i = 0; i < n; i++) { const s = new THREE.Mesh(new THREE.IcosahedronGeometry(R(4, 8), 1), cm); s.position.set(i * 5 - n * 2.5, R(-1, 1.5), R(-3, 3)); s.scale.y = .55; cg.add(s); }
+  const cm = new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: .9, roughness: 1, emissive: 0x404850 });
+  const puff = lumpy(new THREE.SphereGeometry(1, 14, 10), .18, 1.5, 3);
+  for (let k = 0; k < 26; k++) { const cg = new THREE.Group(); const n = 4 + Math.floor(rand() * 5);
+    for (let i = 0; i < n; i++) { const s = new THREE.Mesh(puff, cm), r = R(4, 8) * (1 - Math.abs(i - n / 2) / n); s.scale.set(r * 1.2, r * .6, r); s.position.set(i * 4.5 - n * 2.25, R(-.5, 1.5) + r * .2, R(-3, 3)); cg.add(s); }
     cg.position.set(R(-HALF, HALF), R(70, 95), R(-HALF, HALF)); scene.add(cg); world.clouds.push(cg); }
 }
 
@@ -691,7 +805,16 @@ const BASE = {
   // --- SUPER RARE: very low drop chance, each gives a right-click ability (kept through fusions)
   meteor: { e: '☄️', p: 8, w: .8, rare: true }, blink: { e: '🌀', p: 6, w: .8, rare: true }, dragon: { e: '🐉', p: 9, w: .8, rare: true },
   nova: { e: '🧊', p: 7, w: .8, rare: true }, rainbow: { e: '🌈', p: 6, w: .8, rare: true }, storm: { e: '🌩️', p: 8, w: .8, rare: true },
+  // --- BOSS ITEMS: never found anywhere else — each is dropped only by its own boss. Strong weapons that merge like anything else.
+  ember: { e: '🌋', p: 26, w: 0, boss: 'titan' }, fang: { e: '🦷', p: 24, w: 0, boss: 'wyrm' }, ankh: { e: '☥', p: 22, w: 0, boss: 'pharaoh' }, spore: { e: '🍄', p: 20, w: 0, boss: 'queen' },
+  roc: { e: '🪶', p: 22, w: 0, boss: 'roc' }, colossus: { e: '🗿', p: 26, w: 0, boss: 'colossus' }, phylactery: { e: '⚱️', p: 22, w: 0, boss: 'lich' }, tentacle: { e: '🐙', p: 24, w: 0, boss: 'kraken' },
+  abyss: { e: '🌑', p: 26, w: 0, boss: 'behemoth' }, heartwood: { e: '🌳', p: 20, w: 0, boss: 'treant' },
+  // --- VOID CORE: merges ONLY onto a bag — that bag (and what's inside it) survives death
+  voidcore: { e: '🟣', p: 1, w: 0 },
 };
+const BOSS_KEYS = Object.keys(BASE).filter(k => BASE[k].boss);
+const isBossT = t => BOSS_KEYS.some(k => t[k]);
+const isVC = it => !!(it && it.traits.voidcore && !it.traits.bag);
 const RARE_KEYS = Object.keys(BASE).filter(k => BASE[k].rare);
 const isRareT = t => Object.keys(t).some(k => BASE[k] && BASE[k].rare);
 const ABIL = {
@@ -706,14 +829,16 @@ const NOUN = { sword: 'Sword', bow: 'Bow', wand: 'Wand', stick: 'Stick', rock: '
   axe: 'Axe', hammer: 'Hammer', trident: 'Trident', boomerang: 'Boomerang', poison: 'Spore', wind: 'Tornado', star: 'Star', heart: 'Heart', moon: 'Moon Charm', hourglass: 'Hourglass',
   knife: 'Dagger', gem: 'Gem', eye: 'Evil Eye', skull: 'Skull', coins: 'Coin Bag', bell: 'Bell', web: 'Web', mirror: 'Mirror', meat: 'Meat', horn: 'Horn',
   spring: 'Spring', glider: 'Glider', fin: 'Fin', skate: 'Skateboard', ufo: 'Saucer', helmet: 'Helmet', chestplate: 'Chestplate', leggings: 'Leggings', bag: 'Bag', pickaxe: 'Pickaxe', void: 'Void Orb', sun: 'Sun Stone', chain: 'Chain', echo: 'Echo Shell', ghost: 'Ghost', anchor: 'Anchor', lantern: 'Lantern', battery: 'Battery', thorns: 'Cactus', crown: 'Crown',
-  meteor: 'Meteor Stone', blink: 'Portal Orb', dragon: 'Dragon Soul', nova: 'Frost Core', rainbow: 'Rainbow Charm', storm: 'Storm Cloud' };
+  meteor: 'Meteor Stone', blink: 'Portal Orb', dragon: 'Dragon Soul', nova: 'Frost Core', rainbow: 'Rainbow Charm', storm: 'Storm Cloud',
+  ember: 'Titan Ember', fang: 'Wyrm Fang', ankh: 'Pharaoh Ankh', spore: 'Spore Heart', roc: 'Roc Feather', colossus: 'Colossus Core', phylactery: 'Phylactery', tentacle: 'Kraken Tentacle', abyss: 'Abyss Shard', heartwood: 'Heartwood', voidcore: 'Void Core' };
 const ADJ = { sword: 'Bladed', bow: "Archer's", wand: 'Magic', stick: 'Wooden', rock: 'Heavy', bomb: 'Explosive', fire: 'Flaming', ice: 'Frost', spark: 'Thunder', boots: 'Swift', rocket: 'Rocket', feather: 'Winged', shield: 'Guardian', potion: 'Vampiric', magnet: 'Seeking', clover: 'Lucky',
   axe: 'Cleaving', hammer: 'Crushing', trident: 'Piercing', boomerang: 'Returning', poison: 'Toxic', wind: 'Gusty', star: 'Starry', heart: 'Hearty', moon: 'Lunar', hourglass: 'Hasty',
   knife: 'Quick', gem: 'Jeweled', eye: 'Cursed', skull: 'Reaping', coins: 'Golden', bell: 'Ringing', web: 'Sticky', mirror: 'Mirrored', meat: 'Feasting', horn: 'Fearsome',
   spring: 'Bouncy', glider: 'Gliding', fin: 'Aquatic', skate: 'Rolling', ufo: 'Hovering', helmet: 'Helmeted', chestplate: 'Armored', leggings: 'Plated', bag: 'Roomy', pickaxe: 'Digging', void: 'Void', sun: 'Solar', chain: 'Chained', echo: 'Echoing', ghost: 'Haunted', anchor: 'Anchored', lantern: 'Glowing', battery: 'Charged', thorns: 'Thorny', crown: 'Royal',
-  meteor: 'Meteoric', blink: 'Warping', dragon: 'Draconic', nova: 'Glacial', rainbow: 'Prismatic', storm: 'Stormcalling' };
-const CORE_ORDER = ['meteor', 'blink', 'dragon', 'nova', 'rainbow', 'storm','bomb', 'rock', 'fire', 'ice', 'spark', 'poison', 'wind', 'web', 'star', 'bell', 'boots', 'rocket', 'feather', 'ufo', 'glider', 'spring', 'skate', 'fin', 'heart', 'shield', 'mirror', 'potion', 'meat', 'magnet', 'clover', 'gem', 'eye', 'skull', 'horn', 'coins', 'moon', 'hourglass', 'pickaxe', 'void', 'sun', 'chain', 'echo', 'ghost', 'anchor', 'lantern', 'battery', 'thorns', 'crown', 'bag', 'stick'];
-const MELEE_W = ['sword', 'axe', 'hammer', 'trident', 'knife'], SHOOT_W = ['bow', 'wand', 'boomerang'];
+  meteor: 'Meteoric', blink: 'Warping', dragon: 'Draconic', nova: 'Glacial', rainbow: 'Prismatic', storm: 'Stormcalling',
+  ember: 'Molten', fang: 'Wyrmbane', ankh: 'Pharaonic', spore: 'Sporeborn', roc: 'Tempest', colossus: 'Colossal', phylactery: 'Lich-bound', tentacle: 'Abyssal', abyss: 'Voidforged', heartwood: 'Ancient', voidcore: 'Void-bound' };
+const CORE_ORDER = ['ember', 'fang', 'ankh', 'spore', 'roc', 'colossus', 'phylactery', 'tentacle', 'abyss', 'heartwood', 'meteor', 'blink', 'dragon', 'nova', 'rainbow', 'storm','bomb', 'rock', 'fire', 'ice', 'spark', 'poison', 'wind', 'web', 'star', 'bell', 'boots', 'rocket', 'feather', 'ufo', 'glider', 'spring', 'skate', 'fin', 'heart', 'shield', 'mirror', 'potion', 'meat', 'magnet', 'clover', 'gem', 'eye', 'skull', 'horn', 'coins', 'moon', 'hourglass', 'pickaxe', 'void', 'sun', 'chain', 'echo', 'ghost', 'anchor', 'lantern', 'battery', 'thorns', 'crown', 'bag', 'voidcore', 'stick'];
+const MELEE_W = ['sword', 'axe', 'hammer', 'trident', 'knife', 'ember', 'fang', 'colossus', 'tentacle', 'heartwood'], SHOOT_W = ['bow', 'wand', 'boomerang', 'ankh', 'spore', 'roc', 'phylactery', 'abyss'];
 const TIERS = [null, ['Common', '#9aa5b1'], ['Uncommon', '#4caf50'], ['Rare', '#2f8fff'], ['Epic', '#a64dff'], ['Legendary', '#ff9800'], ['Mythic', '#ff3d7f'], ['Divine', '#40ffe0'], ['Cosmic', '#ffffff']];
 const tierOf = t => TIERS[Math.min(t, 8)];
 const ARMOR_SLOTS = ['head', 'chest', 'legs'], EQUIP_SLOTS = ['head', 'chest', 'legs', 'bag'], SLOT_KEY = { head: 'helmet', chest: 'chestplate', legs: 'leggings', bag: 'bag' }, SLOT_NAME = { head: 'Helmet', chest: 'Chestplate', legs: 'Leggings', bag: 'Bag' };
@@ -729,7 +854,7 @@ const discovered = new Set();
 function weaponsOf(t) { const shooter = SHOOT_W.some(k => t[k]); const w = [...MELEE_W, ...SHOOT_W].filter(k => t[k]); if (t.stick && !MELEE_W.some(k => t[k]) && !shooter) w.unshift('stick'); return w; }
 function traitHash(t) { let h = 7; for (const k of Object.keys(t).sort()) { for (let i = 0; i < k.length; i++) h = (Math.imul(h, 31) + k.charCodeAt(i)) >>> 0; h = (Math.imul(h, 17) + t[k]) >>> 0; } return h; }
 function nameOf(t, tier) {
-  if (t.bag) return 'Bag Lv ' + t.bag;
+  if (t.bag) return (t.voidcore ? 'Void Bag Lv ' : 'Bag Lv ') + t.bag;
   const used = new Set(); let core, suffix = '';
   const weapons = weaponsOf(t), shooter = SHOOT_W.some(k => t[k]);
   const armor = ARMOR_KEYS.filter(k => t[k]);
@@ -810,15 +935,42 @@ const ART = {
   nova: [['M50 6L88 28L88 72L50 94L12 72L12 28Z', '#9fe8ff'], ['M50 6L88 28L50 50L12 28Z', '#dcf8ff'], ['M50 50L88 28L88 72L50 94Z', '#6ac8ef'], ['M30 34L40 28L42 40Z', '#ffffff']],
   rainbow: [['M8 84A42 42 0 0 1 92 84', null, '#ff4d4d', 7], ['M15 84A35 35 0 0 1 85 84', null, '#ffb84d', 7], ['M22 84A28 28 0 0 1 78 84', null, '#fff04d', 7], ['M29 84A21 21 0 0 1 71 84', null, '#5dff6a', 7], ['M36 84A14 14 0 0 1 64 84', null, '#4dd2ff', 7], [pE(16, 86, 14, 8), '#ffffff'], [pE(84, 86, 14, 8), '#ffffff']],
   storm: [['M20 58C4 58 4 32 22 32C24 14 48 10 56 24C66 12 88 18 86 36C98 38 98 58 82 58Z', '#7d879c'], ['M52 52L36 78L50 78L42 98L68 66L54 66L62 52Z', '#fff04a']],
+  // boss items
+  ember: [['M14 70L22 36L48 16L78 28L88 60L70 86L34 88Z', '#3a2420'], ['M28 44L46 52L40 72M52 28L56 50L76 56M46 52L60 64L56 82', null, '#ff7a14', 6], ['M46 52L60 64', null, '#ffd060', 2.5], [pC(48, 52, 8), '#ffb030']],
+  fang: [['M26 8C62 8 86 42 70 94C60 70 44 50 26 40Z', '#eef6ff'], ['M26 8C44 12 54 28 50 46C44 36 36 30 26 26Z', '#bfe6ff'], ['M30 14L44 22L52 36', null, '#ffffff', 2], ['M8 30L26 36M10 50L30 48M18 66L40 58', null, '#9fe8ff', 3]],
+  ankh: [[pE(50, 27, 15, 19), null, '#ffcf40', 10], ['M44 44L56 44L56 95L44 95Z', '#ffcf40'], ['M18 46L82 46L82 58L18 58Z', '#ffcf40'], [pC(50, 52, 6), '#40e0ff']],
+  spore: [['M8 54C8 16 92 16 92 54Z', '#8a3a8a'], [pC(32, 38, 6), '#7affa0'], [pC(56, 30, 7), '#7affa0'], [pC(74, 44, 5), '#7affa0'], [pC(46, 46, 4), '#7affa0'], ['M38 54L62 54L60 90L40 90Z', '#e8dcc8'], [pC(50, 72, 7), '#ff5a8a']],
+  roc: [['M84 8C98 42 64 84 22 90C26 54 52 18 84 8Z', '#c8b898'], ['M18 96L80 14', null, '#6a5a4a', 3], ['M70 26L52 50L62 50L44 78L76 44L64 44L78 26Z', '#fff26a']],
+  colossus: [['M20 12L80 12L86 88L14 88Z', '#8a8680'], ['M20 12L80 12L78 24L22 24Z', '#a8a49c'], ['M28 40L44 40L44 48L28 48ZM56 40L72 40L72 48L56 48Z', '#60c0ff'], ['M40 64L60 64L60 72L40 72Z', '#4a4640'], ['M30 80L50 52L70 80', null, '#60b0ff', 3], ['M12 60L20 54M84 50L90 58', null, '#4a6a2a', 5]],
+  phylactery: [['M40 16L60 16L58 28L42 28Z', '#3a4a3a'], [pE(50, 60, 28, 32), '#2a3a2a'], ['M34 8L66 8L66 16L34 16Z', '#8a8a7a'], [pC(50, 58, 12), '#6aff9a'], [pC(50, 58, 5), '#e0ffe8'], ['M28 46L72 46M24 72L76 72', null, '#8a8a7a', 3]],
+  tentacle: [['M20 92C10 60 30 40 50 46C70 52 84 36 80 16', null, '#c04a7a', 16], ['M20 92C10 60 30 40 50 46C70 52 84 36 80 16', null, '#e070a0', 5], [pC(24, 74, 4), '#ffd0e0'], [pC(32, 54, 4), '#ffd0e0'], [pC(50, 50, 4), '#ffd0e0'], [pC(68, 46, 3.5), '#ffd0e0'], [pC(78, 30, 3), '#ffd0e0']],
+  abyss: [['M50 4L74 40L60 96L40 96L26 40Z', '#1a0a2a'], ['M50 4L60 40L50 96L40 40Z', '#3a1a5a'], ['M50 4L74 40L60 96M50 4L26 40L40 96', null, '#b06aff', 2.5], [pC(50, 44, 7), '#e0c0ff']],
+  heartwood: [['M50 92C10 64 8 36 26 22C40 12 48 22 50 32C52 22 60 12 74 22C92 36 90 64 50 92Z', '#7a4a2a'], ['M50 80C26 62 24 44 34 36M50 80C74 62 76 44 66 36', null, '#5a3218', 3], [pC(50, 52, 8), '#ffc040'], ['M50 30C46 14 58 6 70 8C68 20 60 28 50 30Z', '#4caf50'], ['M48 30C40 20 28 20 22 26C30 34 40 34 48 30Z', '#3c9a40']],
+  voidcore: [[pC(50, 50, 42), '#1a0630'], ['M50 14C72 14 86 30 82 50M50 86C28 86 14 70 18 50', null, '#b06aff', 5], ['M30 26C44 34 56 34 70 26M30 74C44 66 56 66 70 74', null, '#7a3ad0', 3], [pC(50, 50, 14), '#e8c8ff'], [pC(50, 50, 6), '#ffffff']],
 };
 const artTexts = {}; // cached small canvases per key
+// colour helpers for shaded icon art
+const _cc = document.createElement('canvas').getContext('2d');
+function rgbaOf(c) { _cc.fillStyle = '#000'; _cc.fillStyle = c; const s = _cc.fillStyle; if (s[0] === '#') return [parseInt(s.slice(1, 3), 16), parseInt(s.slice(3, 5), 16), parseInt(s.slice(5, 7), 16), 1]; const m = s.match(/[\d.]+/g).map(Number); return [m[0], m[1], m[2], m[3] ?? 1]; }
+function shadeC(c, f) { const [r, g, b, a] = rgbaOf(c), t = f > 0 ? 255 : 0, k = Math.abs(f); return `rgba(${Math.round(r + (t - r) * k)},${Math.round(g + (t - g) * k)},${Math.round(b + (t - b) * k)},${a})`; }
+const grainPat = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d'); const img = x.createImageData(64, 64);
+  for (let i = 0; i < 64 * 64; i++) { const v = trand() * 255; img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v; img.data[i * 4 + 3] = 255; } x.putImageData(img, 0, 0); return c; })();
+// each filled part is lit from the top-left: gradient body, glossy highlight, soft inner shadow, material grain, darker rim instead of a cartoon outline
 function drawArt(x, k, cx, cy, size, rot = 0) {
   const parts = ART[k]; if (!parts) return;
   x.save(); x.translate(cx, cy); x.rotate(rot); x.scale(size / 100, size / 100); x.translate(-50, -50); x.lineJoin = x.lineCap = 'round';
-  const ol = 'rgba(20,14,30,.8)', sb = x.shadowBlur;
+  const sb = x.shadowBlur, pat = x.createPattern(grainPat, 'repeat');
   for (const [d, fill, stroke, w] of parts) { const p = new Path2D(d);
-    if (fill) { x.shadowBlur = sb; x.fillStyle = fill; x.fill(p); x.shadowBlur = 0; x.lineWidth = 3.5; x.strokeStyle = ol; x.stroke(p); }
-    else { x.shadowBlur = 0; x.lineWidth = w + 4; x.strokeStyle = ol; x.stroke(p); x.lineWidth = w; x.strokeStyle = stroke; x.stroke(p); } }
+    if (fill) {
+      const gr = x.createLinearGradient(15, 5, 85, 95); gr.addColorStop(0, shadeC(fill, .38)); gr.addColorStop(.45, fill); gr.addColorStop(1, shadeC(fill, -.45));
+      x.shadowBlur = sb; x.fillStyle = gr; x.fill(p); x.shadowBlur = 0;
+      x.save(); x.clip(p);
+      const hl = x.createRadialGradient(30, 22, 2, 30, 22, 46); hl.addColorStop(0, 'rgba(255,255,255,.55)'); hl.addColorStop(.35, 'rgba(255,255,255,.12)'); hl.addColorStop(1, 'rgba(255,255,255,0)'); x.fillStyle = hl; x.fillRect(-10, -10, 120, 120);
+      x.globalAlpha = .13; x.globalCompositeOperation = 'overlay'; x.fillStyle = pat; x.fillRect(-10, -10, 120, 120); x.globalCompositeOperation = 'source-over'; x.globalAlpha = 1;
+      x.lineWidth = 6; x.strokeStyle = 'rgba(0,0,0,.22)'; x.translate(2, 2); x.stroke(p); x.restore();
+      x.lineWidth = 2.2; x.strokeStyle = shadeC(fill, -.62); x.stroke(p);
+    } else { x.shadowBlur = 0; x.lineWidth = w + 2.5; x.strokeStyle = shadeC(stroke, -.6); x.stroke(p); x.lineWidth = w; x.strokeStyle = stroke; x.stroke(p);
+      x.lineWidth = Math.max(1, w * .3); x.strokeStyle = 'rgba(255,255,255,.35)'; x.save(); x.translate(-w * .18, -w * .18); x.stroke(p); x.restore(); } }
   x.restore();
 }
 function artCanvas(k, px = 64) { const key = k + '|' + px; if (artTexts[key]) return artTexts[key];
@@ -861,6 +1013,8 @@ function drawIcon(it) {
   if (isRareT(t)) { // super rare: shimmering rainbow frame
     const rg = x.createLinearGradient(0, 0, 128, 128); ['#ff4d4d', '#ffb84d', '#fff04d', '#5dff6a', '#4dd2ff', '#9a6bff', '#ff4dd8'].forEach((c2, i) => rg.addColorStop(i / 6, c2));
     box(); x.lineWidth = 7; x.strokeStyle = rg; x.shadowColor = '#fff'; x.shadowBlur = 12; x.stroke(); x.shadowBlur = 0; }
+  if (isBossT(t)) { box(); x.lineWidth = 7; const bg = x.createLinearGradient(0, 0, 128, 128); bg.addColorStop(0, '#ff2a2a'); bg.addColorStop(.5, '#ffd040'); bg.addColorStop(1, '#ff2a2a'); x.strokeStyle = bg; x.shadowColor = '#ff4020'; x.shadowBlur = 16; x.stroke(); x.shadowBlur = 0; }
+  if (t.voidcore) { box(); x.lineWidth = 6; x.strokeStyle = '#b06aff'; x.shadowColor = '#c080ff'; x.shadowBlur = 18; x.stroke(); x.shadowBlur = 0; }
   if (it.tier >= 5) { x.lineWidth = 2; x.strokeStyle = '#fff8'; x.beginPath(); if (x.roundRect) x.roundRect(10, 10, 108, 108, 17); x.stroke(); }
   const font = s => s + 'px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif';
   x.textAlign = 'center'; x.textBaseline = 'middle';
@@ -921,13 +1075,17 @@ function itemStats(it) {
   const pdmg = dmg * (melee ? .6 : .85) / (shots > 1 ? 1 + shots * .2 : 1);
   let cd = melee && ranged ? .55 : melee ? .42 : .5; if (t.hammer) cd += .15; cd *= Math.pow(.75, t.hourglass || 0) * Math.pow(.7, t.knife || 0);
   return { melee, ranged, punch: !melee && !ranged, shots, ammo, dmg: melee ? dmg : 3, pdmg, cd,
-    reach: 2.3 + (t.sword ? .7 : 0) + (t.axe ? .4 : 0) + (t.trident ? 1.6 : 0) + Math.min(it.tier, 6) * .12, arc: t.axe ? -.35 : .3 };
+    reach: 2.3 + (t.sword ? .7 : 0) + (t.axe ? .4 : 0) + (t.trident ? 1.6 : 0) + (t.tentacle ? 1.8 : 0) + (t.colossus ? .5 : 0) + (t.ember ? .4 : 0) + Math.min(it.tier, 6) * .12, arc: (t.axe || t.colossus) ? -.35 : .3 };
 }
 const AMMO_NAME = { stick: 'sticks', rock: 'boulders', bomb: 'bombs', arrow: 'arrows', orb: 'magic orbs', star: 'stars', boomerang: 'boomerangs' };
 function describe(it) {
   const s = itemStats(it), t = it.traits, L = [];
   const aSlots = ARMOR_SLOTS.filter(sl => fitsSlot(it, sl));
   if (t.bag) L.push(`<b style="color:#ffc070">🎒 +${bagSlots(t.bag)} inventory slots</b> — wear it in the Bag slot`, t.bag < BAG_MAX ? '➕ Merge with another bag to make it bigger (only bags!)' : '⭐ Max size bag');
+  if (t.bag && t.voidcore) L.push('<b style="color:#c890ff">🟣 VOID-BOUND: when you die you keep this bag AND every item inside its slots</b>');
+  else if (t.bag) L.push('🟣 Merge a Void Core onto it so it survives death');
+  if (isVC(it)) L.push('<b style="color:#c890ff">🟣 Drag onto a Bag to make it void-bound</b> — that bag and everything inside it survive death', "❌ Can't be merged with anything except a bag");
+  if (isBossT(t)) L.push(`<b style="color:#ff7a5a">☠️ Boss item — only dropped by the ${BOSS_KEYS.filter(k => t[k]).map(k => BOSSES[BASE[k].boss].name).join(' & ')}</b>`);
   if (aSlots.length) { const df = armorDef(it);
     L.push(`<b style="color:#8fd0ff">🛡️ Armour: +${df} defence (${Math.round(df / (df + 50) * 100)}% less damage alone)</b>`);
     L.push(`👕 Wear it in the ${aSlots.map(sl => SLOT_NAME[sl]).join(' or ')} slot — its other powers work while worn`); }
@@ -986,6 +1144,16 @@ function describe(it) {
   if (t.thorns) L.push(`🌵 Enemies that hit you take ${10 * t.thorns}+ damage back`);
   if (t.crown) L.push(`👑 Items sell for +${50 * t.crown}% and monsters drop +${25 * t.crown}% coins`);
   if (t.ufo) L.push(`🛸 Hold jump in the air to fly up (${(1.2 * t.ufo).toFixed(1)}s)`);
+  if (t.ember) L.push(`🌋 Searing burns, 25% chance a hit erupts and burns everything around · walk through lava unharmed`);
+  if (t.fang) L.push(`🦷 Chills enemies; frozen enemies take +${60 * t.fang}% damage, 30% chance to freeze solid`);
+  if (t.ankh) L.push(`☥ Enemies you kill explode in a sandstorm blast · +${50 * t.ankh}% coins`);
+  if (t.spore) L.push(`🍄 Heavy poison, spore clouds on hit, heals you ${4 * t.spore}% of damage`);
+  if (t.roc) L.push(`🪶 +${2 * t.roc} extra jumps & gliding · 30% chance hits call lightning`);
+  if (t.colossus) L.push(`🗿 Take ${Math.round((1 - Math.pow(.7, t.colossus)) * 100)}% less damage · hits send out a shockwave`);
+  if (t.phylactery) L.push(`⚱️ Heals ${8 * t.phylactery}% of damage dealt · every kill raises 2 spirits that attack`);
+  if (t.tentacle) L.push(`🐙 Very long reach · hits grab ${2 + t.tentacle} nearby enemies and slam them together · swim much faster`);
+  if (t.abyss) L.push(`🌑 Every 5th hit tears open a black hole that drags enemies in and crushes them`);
+  if (t.heartwood) L.push(`🌳 +${60 * t.heartwood} max HP, regenerate ${3 * t.heartwood} HP/s · hits trap enemies in roots`);
   for (const cb of combosOf(t)) L.push(`<b style="color:#7affd0">🌟 COMBO: ${cb.name}</b> — ${cb.desc}`);
   if ((it.tier >= 7 || isRareT(t)) && t.bomb) L.push('<b style="color:#ffb060">💥 Blasts real craters into the ground</b>');
   for (const k of RARE_KEYS) if (t[k]) L.push(`<b style="color:#ff9cff">🖱️ Right-click${isTouch ? ' / ✨ button' : ' / R'}: ${BASE[k].e} ${ABIL[k].name}</b> — ${ABIL[k].desc}${t[k] > 1 ? ` (x${t[k]} power)` : ''} · ${ABIL[k].cd}s cooldown`);
@@ -1033,11 +1201,11 @@ function setSlot(r, it) { if (isArmorRef(r)) armor[r] = it; else inv[r] = it; }
 const slotEl = r => isArmorRef(r) ? armorEls[r] : slotEls[r];
 const armorDefTotal = () => ARMOR_SLOTS.reduce((a, s) => a + (armor[s] ? armorDef(armor[s]) : 0), 0);
 function infoHTML(it, worn) { const [tn, tc] = tierOf(it.tier);
-  return `<div class="nm" style="color:${tc}">${worn ? '👕 ' : ''}${it.name}</div><div style="font-size:11px;opacity:.75">${isRareT(it.traits) ? '<b style="color:#ff9cff">🌟 SUPER RARE</b> · ' : ''}${tn} · Power ${it.power} · Sells for 🪙 ${sellPrice(it)}</div>` + describe(it).map(l => `<div class="ln">${l}</div>`).join(''); }
+  return `<div class="nm" style="color:${tc}">${worn ? '👕 ' : ''}${it.name}</div><div style="font-size:11px;opacity:.75">${isBossT(it.traits) ? '<b style="color:#ff7a5a">☠️ BOSS ITEM</b> · ' : ''}${isRareT(it.traits) ? '<b style="color:#ff9cff">🌟 SUPER RARE</b> · ' : ''}${tn} · Power ${it.power} · Sells for 🪙 ${sellPrice(it)}</div>` + describe(it).map(l => `<div class="ln">${l}</div>`).join(''); }
 function showInfo(it, worn) { infoEl.innerHTML = infoHTML(it, worn); infoEl.style.display = 'block';
   if (isTouch) { clearTimeout(renderInv.hideT); renderInv.hideT = setTimeout(() => infoEl.style.display = 'none', 9000); } }
 function equipAuto(it) { const s = EQUIP_SLOTS.find(sl => fitsSlot(it, sl) && !armor[sl]); if (!s) return false; armor[s] = it; discover(it); renderInv(); return s; }
-function sellPrice(it) { return Math.max(3, Math.round((10 * ingredients(it) + it.power * .6) * (1 + .1 * (it.tier - 1)) * (isRareT(it.traits) ? 3 : 1) * (1 + .5 * (curT().crown || 0)))); }
+function sellPrice(it) { return Math.max(3, Math.round((10 * ingredients(it) + it.power * .6) * (1 + .1 * (it.tier - 1)) * (isRareT(it.traits) ? 3 : 1) * (isBossT(it.traits) ? 5 : 1) * (1 + .5 * (curT().crown || 0)))); }
 function sellItem(i) {
   const it = getSlot(i); if (!it) return; const price = sellPrice(it);
   setSlot(i, null); renderInv(); addCoins(price);
@@ -1075,6 +1243,7 @@ function dropAction(from, t) {
   const a = getSlot(from), b = getSlot(t);
   if (!isSlotRef(t) || t === from) return null;
   if (from === 'bag' && typeof t === 'number' && t >= 10) return null; // can't put the bag inside its own slots
+  if (b && (isVC(a) || isVC(b))) { const other = isVC(a) ? b : a; return isBag(other) ? (other.traits.voidcore ? 'vcdup' : 'merge') : 'novc'; }
   if (b && (isBag(a) || isBag(b))) return isBag(a) && isBag(b) ? (a.traits.bag + b.traits.bag > BAG_MAX ? 'bagmax' : 'merge') : 'nobag';
   if (b) return 'merge';
   if (isArmorRef(t) && !fitsSlot(a, t)) return 'nofit';
@@ -1096,6 +1265,8 @@ addEventListener('pointermove', e => {
     cap.innerHTML = `✨ → ${nameOf(nt, Math.max(dst.tier, src.tier) + 1)}<br><span style="color:${ok ? '#ffd84a' : '#ff6b6b'}">🪙 ${cost}${ok ? '' : ` (you have ${coins})`}</span>`; cap.style.display = 'block'; }
   else if (act === 'nofit') { cap.innerHTML = `<span style="color:#ff6b6b">Only a ${SLOT_NAME[t]} fits here</span>`; cap.style.display = 'block'; }
   else if (act === 'nobag') { cap.innerHTML = `<span style="color:#ff6b6b">Bags only merge with bags</span>`; cap.style.display = 'block'; }
+  else if (act === 'novc') { cap.innerHTML = `<span style="color:#ff6b6b">A Void Core only merges with a bag</span>`; cap.style.display = 'block'; }
+  else if (act === 'vcdup') { cap.innerHTML = `<span style="color:#ff6b6b">This bag is already void-bound</span>`; cap.style.display = 'block'; }
   else if (act === 'bagmax') { cap.innerHTML = `<span style="color:#ff6b6b">Too big — max bag size is Lv ${BAG_MAX}</span>`; cap.style.display = 'block'; }
   else if (act === 'move' && t === 'bag') { cap.textContent = `🎒 Wear (+${bagSlots(src.traits.bag)} slots)`; cap.style.display = 'block'; }
   else if (act === 'move' && isArmorRef(t)) { cap.textContent = `👕 Wear (+${armorDef(src)} defence)`; cap.style.display = 'block'; }
@@ -1113,6 +1284,8 @@ function endDrag(e) {
   if (act === 'merge') doMerge(d.from, t);
   else if (act === 'nofit') { toast(`Only a ${SLOT_NAME[t]} fits in that slot`, 1800); sfx(140, .15, 'square', .04, .7); }
   else if (act === 'nobag') { toast('🎒 Bags can only be merged with another bag', 2000); sfx(140, .15, 'square', .04, .7); }
+  else if (act === 'novc') { toast('🟣 A Void Core can only be merged onto a <b>bag</b>', 2200); sfx(140, .15, 'square', .04, .7); }
+  else if (act === 'vcdup') { toast('🟣 That bag is already void-bound', 2000); sfx(140, .15, 'square', .04, .7); }
   else if (act === 'bagmax') { toast(`🎒 That would be too big — bags max out at Lv ${BAG_MAX} (+${bagSlots(BAG_MAX)} slots)`, 2200); sfx(140, .15, 'square', .04, .7); }
   else if (act) { setSlot(t, getSlot(d.from)); setSlot(d.from, null); if (sel === d.from && !isArmorRef(t)) sel = t;
     if (t === 'bag') { toast(`🎒 Bag on: <b>+${bagSlots(armor.bag.traits.bag)} slots</b>`, 1800); sfx(300, .12, 'triangle', .06, 1.6); }
@@ -1181,6 +1354,7 @@ const SCALES = { major: [0, 2, 4, 5, 7, 9, 11], minor: [0, 2, 3, 5, 7, 8, 10], d
 const MOODS = {
   day: { bpm: 100, scale: 'major', root: 60, keys: [0, 2, -3, 5], progs: [[0, 4, 5, 3], [0, 5, 3, 4], [3, 4, 0, 5], [5, 3, 0, 4], [0, 3, 4, 4], [3, 0, 4, 5]], lead: 'triangle', drums: 2, arp: true, density: .8 },
   night: { bpm: 80, scale: 'minor', root: 57, keys: [0, 3, -2, 5], progs: [[0, 5, 2, 6], [0, 3, 6, 4], [5, 6, 0, 0], [0, 6, 5, 4], [3, 4, 0, 6]], lead: 'sine', drums: 1, arp: true, density: .55 },
+  boss: { bpm: 132, scale: 'minor', root: 50, keys: [0, 1, -2], progs: [[0, 0, 5, 6], [0, 6, 5, 4], [0, 1, 0, 6], [5, 6, 0, 0]], lead: 'square', drums: 2, arp: true, density: .95 },
   cave: { bpm: 68, scale: 'dorian', root: 50, keys: [0, 2, -2], progs: [[0, 0, 3, 3], [0, 6, 3, 4], [0, 3, 0, 6], [4, 3, 0, 0]], lead: 'sine', drums: 0, arp: false, density: .35 },
 };
 const music = { started: false, next: 0, step: 0, bar: 0, mood: 'day', sec: null, cycle: 0, key: 0 };
@@ -1248,7 +1422,7 @@ function playStep(t) {
   // advance
   music.step++; if (music.step % 8 === 0) { music.bar++;
     if (music.bar % 8 === 0) { // new section; every 4 sections a new cycle (new key)
-      const want = player.under ? 'cave' : isNight ? 'night' : 'day';
+      const want = bossFight() ? 'boss' : player.under ? 'cave' : isNight ? 'night' : 'day';
       if (want !== music.mood || music.bar % 32 === 0) { music.mood = want; const ks = MOODS[want].keys; music.key = ks[Math.floor(mrand.r() * ks.length)]; }
       newSection(); } }
 }
@@ -1256,7 +1430,7 @@ function updateMusic() {
   if (!music.started) return;
   if (state !== music.lastState) { music.lastState = state; setMusicVolume(); }
   // switch mood quickly when going underground / night falls
-  const want = player.under ? 'cave' : isNight ? 'night' : 'day';
+  const want = bossFight() ? 'boss' : player.under ? 'cave' : isNight ? 'night' : 'day';
   if (want !== music.mood && music.step % 8 === 0) { music.mood = want; music.key = 0; newSection(); }
   if (music.next < actx.currentTime - .1) music.next = actx.currentTime + .05; // tab was asleep: don't burst
   while (music.next < actx.currentTime + .3) { const eighth = 30 / music.sec.M.bpm; playStep(music.next); music.next += eighth; }
@@ -1288,7 +1462,7 @@ function updateFx(dt) {
 // ============================================================ loot on ground
 const loot = [];
 function spawnLoot(it, x, z, pop = false, y0 = null) {
-  const g = new THREE.Group(); const gy = groundAt(x, z, 999);
+  const g = new THREE.Group(); const gy = groundAt(x, z, player.under ? player.pos.y + 1 : 999); // underground loot lands on the cave floor, not up on the surface
   g.position.set(x, y0 !== null ? gy + y0 : gy + 1, z); scene.add(g);
   const tex = new THREE.CanvasTexture(it.canvas);
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true })); sp.scale.set(.75, .75, 1); g.add(sp);
@@ -1353,6 +1527,7 @@ function openChest(c) {
   // money pops out of the chest
   const amt = Math.round((c.cave ? R(40, 90) * (c.cave.type === 'ruins' ? 2 : 1) : R(8, 20)) * (1 + .5 * (dayNum - 1)));
   if (c.cave || rand() < .75) setTimeout(() => spawnCoins(amt, c.x, c.y, c.z), 200);
+  if (rand() < (c.cave ? .06 : .015)) setTimeout(() => spawnLoot(baseItem('voidcore'), c.x, c.z, true, 1), n * 150 + 80); // rare: makes a bag survive death
   if (rand() < (c.cave ? .2 : .08)) { const rk = pick(RARE_KEYS); setTimeout(() => spawnLoot(baseItem(rk), c.x, c.z, true, 1), n * 150); } // small chance of a super rare
 }
 
@@ -1394,7 +1569,7 @@ function buildItemModel(it) {
   const emis = ec ? { emissive: ec, emissiveIntensity: .6 } : null;
   // metal colour: element tint, otherwise a unique hue per fusion
   const metal = ec ? new THREE.Color(ec).lerp(new THREE.Color(0xffffff), .45).getHex() : new THREE.Color().setHSL(hue, merged ? .45 : 0, .8).getHex();
-  const metalOpt = Object.assign({ metalness: .7, roughness: .3 }, emis || {});
+  const metalOpt = Object.assign({ metalness: .85, roughness: .26, map: TEX.metal }, emis || {});
   const wood = merged ? new THREE.Color().setHSL((hue + .5) % 1, .45, .3).getHex() : 0x8b5a2b;
   const B = (a, b, c) => new THREE.BoxGeometry(a, b, c), C = (a, b, h, s = 6) => new THREE.CylinderGeometry(a, b, h, s);
   let L = .6;
@@ -1404,6 +1579,11 @@ function buildItemModel(it) {
   else if (mainMelee === 'hammer') { mesh(C(.045, .05, 1.0), wood, null, g, 0, .4, 0); L = 1.05; }
   else if (mainMelee === 'trident') { mesh(C(.035, .035, 1.7), wood, null, g, 0, .7, 0); L = 1.55; }
   else if (mainMelee === 'knife') { mesh(B(.09, .5, .025), metal, metalOpt, g, 0, .42, 0); mesh(B(.22, .05, .08), 0x333333, null, g, 0, .15, 0); mesh(C(.035, .035, .25), 0x2a2a2a, null, g, 0, 0, 0); L = .7; }
+  else if (mainMelee === 'ember') { mesh(C(.05, .06, 1.1, 8), 0x2a1a14, { map: TEX.wood }, g, 0, .45, 0); mesh(lumpy(new THREE.SphereGeometry(.27, 12, 9), .07, 4, 2), 0x3a2018, { emissive: 0xff4a00, emissiveIntensity: .9, map: TEX.rock }, g, 0, 1.08, 0); L = 1.25; }
+  else if (mainMelee === 'fang') { const f = mesh(new THREE.ConeGeometry(.1, .95, 10), 0xeef6ff, { roughness: .12, metalness: .1, emissive: 0x2a70b0, emissiveIntensity: .35 }, g, 0, .68, 0); f.rotation.z = .12; mesh(C(.045, .045, .3, 8), 0x3a5a7a, null, g, 0, .05, 0); L = 1.15; }
+  else if (mainMelee === 'colossus') { mesh(C(.06, .07, 1, 8), 0x5a5650, { map: TEX.rock }, g, 0, .4, 0); mesh(B(.52, .42, .42), 0x8a8680, { map: TEX.rock, bumpMap: TEX.rock, bumpScale: .03 }, g, 0, 1.02, 0); mesh(B(.14, .14, .44), 0x60b0ff, { emissive: 0x3080ff, emissiveIntensity: 1.2 }, g, 0, 1.02, 0, false); L = 1.25; }
+  else if (mainMelee === 'tentacle') { for (let i = 0; i < 9; i++) mesh(new THREE.SphereGeometry(.1 - i * .008, 10, 8), i % 2 ? 0xc04a7a : 0xa83a68, { roughness: .35 }, g, Math.sin(i * .55) * .13, i * .19, 0); L = 1.7; }
+  else if (mainMelee === 'heartwood') { mesh(C(.06, .1, 1.2, 8), 0x6a4a2a, { map: TEX.bark, bumpMap: TEX.bark, bumpScale: .02 }, g, 0, .5, 0); mesh(lumpy(new THREE.SphereGeometry(.24, 12, 9), .06, 5, 4), 0x3a7a2a, { map: TEX.leaf }, g, 0, 1.18, 0); mesh(new THREE.SphereGeometry(.09, 8, 6), 0xffc040, { emissive: 0xffa000, emissiveIntensity: .9 }, g, 0, .98, .1, false); L = 1.35; }
   else if (mainMelee === 'stick') { mesh(C(.05, .07, 1.1), 0x8b5a2b, emis, g, 0, .45, 0); mesh(C(.03, .03, .3, 5), 0x8b5a2b, null, g, .1, .7, 0).rotation.z = -.6; L = 1; }
   // every melee weapon in the fusion adds its head
   if (t.axe) { const hy = mainMelee === 'axe' ? .88 : L * .62; mesh(B(.4, .36, .05), metal, metalOpt, g, .22, hy, 0); mesh(B(.06, .44, .06), metal, metalOpt, g, .42, hy, 0); }
@@ -1418,6 +1598,15 @@ function buildItemModel(it) {
     if (!mainMelee) L = .7; }
   if (t.wand) { const off = (mainMelee || t.bow) ? .25 : 0; mesh(C(.03, .04, .75), 0x4a2a6a, null, g, off, .35, 0);
     mesh(new THREE.SphereGeometry(.1, 10, 8), ec || 0xc58cff, { emissive: ec || 0xc58cff, emissiveIntensity: .8 }, g, off, .76, 0, false); if (!mainMelee && !t.bow) L = .8; }
+  const bossSh = ['ankh', 'spore', 'roc', 'phylactery', 'abyss'].find(k => t[k]);
+  if (bossSh) { const lone = !mainMelee && !t.bow && !t.wand, off = lone ? 0 : -.24, hc = { ankh: 0xffd040, spore: 0x9aff6a, roc: 0xfff26a, phylactery: 0x6aff9a, abyss: 0xb06aff }[bossSh];
+    mesh(C(.03, .04, .95, 8), 0x3a2a1a, { map: TEX.wood }, g, off, .42, 0);
+    if (bossSh === 'ankh') { const gold = { metalness: .9, roughness: .25 }; mesh(new THREE.TorusGeometry(.1, .03, 8, 16), 0xffd040, gold, g, off, 1.05, 0); mesh(B(.3, .05, .05), 0xffd040, gold, g, off, .9, 0); }
+    else if (bossSh === 'spore') { const cp = mesh(new THREE.SphereGeometry(.2, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), 0x8a3a8a, null, g, off, .92, 0); for (let i = 0; i < 4; i++) mesh(new THREE.SphereGeometry(.035, 6, 5), 0x7affa0, { emissive: 0x40ff80, emissiveIntensity: 1 }, g, off + Math.cos(i * 1.6) * .11, 1.03, Math.sin(i * 1.6) * .11, false); }
+    else if (bossSh === 'roc') { for (let i = -1; i <= 1; i++) mesh(B(.06, .4, .015), 0xd8c8a8, null, g, off + i * .07, 1.05, 0).rotation.z = i * .35; }
+    else if (bossSh === 'phylactery') { mesh(new THREE.SphereGeometry(.14, 12, 10), 0x2a3a2a, { metalness: .4, roughness: .35 }, g, off, 1, 0); mesh(new THREE.SphereGeometry(.07, 8, 6), 0x6aff9a, { emissive: 0x30ff70, emissiveIntensity: 1.2 }, g, off, 1, .1, false); }
+    else { const sh = mesh(new THREE.OctahedronGeometry(.16), 0x1a0a2a, { metalness: .6, roughness: .15 }, g, off, 1.05, 0); sh.scale.y = 1.8; }
+    const hg = glowSprite(hc, .8, .8); hg.position.set(off, 1.02, 0); g.add(hg); if (lone) L = 1.1; }
   if (t.boomerang) { const b = new THREE.Group(); b.position.set((mainMelee || t.bow || t.wand) ? -.05 : 0, (mainMelee || t.bow || t.wand) ? .1 : .3, (mainMelee || t.bow || t.wand) ? -.15 : 0); g.add(b);
     for (const s of [-1, 1]) mesh(B(.45, .09, .03), 0xd08a3a, null, b, s * .15, 0, 0).rotation.z = s * .6; }
   if (!w.length) { const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(it.canvas), transparent: true })); sp.scale.set(.6, .6, 1); sp.position.y = .25; g.add(sp); L = .4; }
@@ -1477,6 +1666,7 @@ function hurtPlayer(d, src) {
   if (T.mirror && src && !src.dead) applyHit(src, d * .5 * T.mirror, {}, null, { noExplode: true }); // reflect back
   if (T.thorns && src && !src.dead && src.hp !== undefined) applyHit(src, 10 * T.thorns + heldPower() * .3, {}, null, { splash: true, noExplode: true });
   if (T.shield) d *= Math.pow(.7, T.shield);
+  if (T.colossus) d *= Math.pow(.7, T.colossus);
   const def = armorDefTotal(); if (def) d *= 50 / (50 + def);
   if (player.hp - d <= 0 && T.heart && T.fire && !player.phoenixUsed) { // PHOENIX REBIRTH
     player.phoenixUsed = true; player.hp = player.max * .5; player.invuln = 2.5; const pc = player.pos.clone().add(new V3(0, 1, 0));
@@ -1493,13 +1683,17 @@ function hurtPlayer(d, src) {
 function die() {
   alive = false; player.hp = 0; attackHeld = false;
   if (locked()) document.exitPointerLock();
-  document.getElementById('deadText').innerHTML = `You survived until <b>day ${dayNum}</b> and defeated <b>${player.kills}</b> monsters.<br>You lost all your items. Ready for another go?`;
+  document.getElementById('deadText').innerHTML = `You survived until <b>day ${dayNum}</b> and defeated <b>${player.kills}</b> monsters.<br>${armor.bag && armor.bag.traits.voidcore ? 'You lost your items — but your 🟣 <b>Void Bag</b> and everything in it are safe.' : 'You lost all your items.'} Ready for another go?`;
   document.getElementById('deadScreen').style.display = 'block';
 }
 document.getElementById('respawnBtn').onclick = () => {
-  for (const m of monsters) scene.remove(m.g); monsters.length = 0; clearEProjs();
-  // death = lose everything: inventory, armour and bag
-  for (const s of EQUIP_SLOTS) armor[s] = null; inv.fill(null); sel = 0; renderInv();
+  for (const m of monsters) { m.dead = true; scene.remove(m.g); } monsters.length = 0; clearEProjs(); clearBossFx();
+  // death = lose everything: inventory, armour and bag — unless the bag is void-bound, which keeps itself and its contents
+  const vb = armor.bag && armor.bag.traits.voidcore ? armor.bag : null, kept = vb ? inv.slice(10) : [];
+  for (const s of EQUIP_SLOTS) armor[s] = null; inv.fill(null); sel = 0;
+  if (vb) { armor.bag = vb; kept.forEach((it, k) => inv[10 + k] = it); }
+  renderInv(); if (vb) setTimeout(() => toast(`🟣 Your <b>Void Bag</b> survived — ${kept.filter(Boolean).length} item${kept.filter(Boolean).length === 1 ? '' : 's'} kept`, 3500), 300);
+  player.slowT = player.dotT = player.rootT = 0;
   player.pos.set(0, getH(0, 0) + 1, 0); player.vy = 0; player.max = player.baseMax; player.hp = player.max; player.phoenixUsed = false; alive = true; spawnTimer = 20;
   document.getElementById('deadScreen').style.display = 'none';
   if (!isTouch) tryLock();
@@ -1555,6 +1749,7 @@ function updateHazards(dt) {
   for (let i = hazards.length - 1; i >= 0; i--) { const h = hazards[i]; h.life -= dt;
     if (h.life <= 0) { scene.remove(h.s); h.s.material.dispose(); hazards.splice(i, 1); continue; }
     if (h.max < 1e6) h.s.material.opacity = .6 * Math.min(1, h.life / .6);
+    if (h.pull) { h.s.material.rotation += dt * 4; for (const m of monsters) { if (m.dead || m.boss) continue; const ox = h.x - m.x, oz = h.z - m.z, od = Math.hypot(ox, oz); if (od < h.pull && od > .6) { m.kx += ox / od * 40 * dt; m.kz += oz / od * 40 * dt; } } }
     h.tick -= dt; if (h.tick > 0) continue; h.tick = .4;
     for (const m of monsters) if (!m.dead && Math.hypot(m.x - h.x, m.z - h.z) < h.r + m.r && Math.abs(m.y - h.y) < 3) applyHit(m, h.dps * .4, h.T, null, { splash: true, noExplode: true, quiet: true }); }
 }
@@ -1575,12 +1770,10 @@ function deformTerrain(x, z, rad, depth) {
       else H[idx] = Math.max(Math.min(lo, H[idx]), H[idx] - depth * k); } }
   for (const Z of caveZones) if (!Z.hinted && !Z.breached && Math.hypot(x - Z.x, z - Z.z) < Z.r - 3 && getH(x, z) < Z.floor + Z.ht + 3.2) { Z.hinted = true;
     toast('⛏️ The ground sounds <b>hollow</b> here… keep digging!', 3500); sfx(110, .5, 'sine', .08, .5); setTimeout(() => sfx(90, .6, 'sine', .06, .5), 220); }
-  for (let i = Math.max(0, i0 - 1); i <= Math.min(SEG - 1, i1); i++) for (let j = Math.max(0, j0 - 1); j <= Math.min(SEG - 1, j1); j++) {
-    const b = (i * SEG + j) * 18, a = H[i * N + j], bb = H[i * N + j + 1], c = H[(i + 1) * N + j], d = H[(i + 1) * N + j + 1];
-    pos[b + 1] = a; pos[b + 4] = c; pos[b + 7] = bb; pos[b + 10] = bb; pos[b + 13] = c; pos[b + 16] = d;
-    if (Math.hypot(-HALF + (j + .5) * STEP - x, -HALF + (i + .5) * STEP - z) < rad * .85) { const v = rand() * .06;
-      for (let q = 0; q < 6; q++) { col[b + q * 3] = .42 + v; col[b + q * 3 + 1] = .3 + v; col[b + q * 3 + 2] = .2 + v; } } }
-  geo.attributes.position.needsUpdate = true; geo.attributes.color.needsUpdate = true; clearNature(x, z, rad * .9);
+  for (let i = Math.max(0, i0 - 1); i <= Math.min(SEG, i1 + 1); i++) for (let j = Math.max(0, j0 - 1); j <= Math.min(SEG, j1 + 1); j++) { const idx = i * N + j;
+    if (Math.hypot(-HALF + j * STEP - x, -HALF + i * STEP - z) < rad * .9) dirt[idx] = 1; vertCol(idx); }
+  for (let i = Math.max(0, i0 - 2); i <= Math.min(SEG - 1, i1 + 1); i++) for (let j = Math.max(0, j0 - 2); j <= Math.min(SEG - 1, j1 + 1); j++) writeCell(i, j);
+  geo.attributes.position.needsUpdate = true; geo.attributes.normal.needsUpdate = true; geo.attributes.color.needsUpdate = true; clearNature(x, z, rad * .9);
   burst(new V3(x, groundAt(x, z, 999) + .5, z), 0x7a5a3a, 14, 6, .9, 12, 1.3);
 }
 
@@ -1588,71 +1781,274 @@ function deformTerrain(x, z, rad, depth) {
 const MTYPES = {
   goblin: { hp: 60, spd: 4.3, dmg: 9, size: 1, w: 32, coin: 6, name: 'Goblin' },
   mushroom: { hp: 100, spd: 3.3, dmg: 12, size: 1.15, w: 20, coin: 10, name: 'Shroomie' },
-  brute: { hp: 220, spd: 2.6, dmg: 20, size: 1.6, w: 11, coin: 25, name: 'Brute' },
-  bat: { hp: 45, spd: 6, dmg: 7, size: 1, fly: true, w: 16, coin: 5, name: 'Puffbat' },
+  brute: { hp: 220, spd: 2.6, dmg: 20, size: 1.6, w: 11, coin: 25, name: 'Ogre' },
+  bat: { hp: 45, spd: 6, dmg: 7, size: 1, fly: true, w: 16, coin: 5, name: 'Vampire Bat' },
   // ranged monsters keep their distance and shoot
   archer: { hp: 50, spd: 3.8, dmg: 8, size: .95, w: 18, coin: 9, name: 'Goblin Archer', ranged: 'arrow', range: 16, rate: 2.2 },
   mage: { hp: 80, spd: 3, dmg: 13, size: 1.1, w: 10, coin: 15, name: 'Wizard', ranged: 'orb', range: 20, rate: 3 },
   // KING: rare, never fights — runs away and summons monsters. Big reward.
   king: { hp: 320, spd: 5.4, dmg: 0, size: 1.35, w: 0, coin: 150, name: 'King', king: true },
+  // --- 5 new monsters
+  wolf: { hp: 70, spd: 6.4, dmg: 10, size: 1, w: 16, coin: 8, name: 'Dire Wolf', lunge: true },          // fast, pounces at you
+  spider: { hp: 85, spd: 5.2, dmg: 9, size: 1, w: 12, coin: 10, name: 'Giant Spider', webs: true },      // bites slow you down
+  skeleton: { hp: 75, spd: 3.6, dmg: 10, size: 1, w: 12, coin: 11, name: 'Skeleton', ranged: 'bone', range: 15, rate: 1.9 }, // throws bones
+  slime: { hp: 90, spd: 3.2, dmg: 10, size: 1.1, w: 12, coin: 8, name: 'Slime', splits: true },        // splits in two when killed
+  golem: { hp: 420, spd: 2.1, dmg: 26, size: 1.7, w: 5, coin: 40, name: 'Stone Golem', slam: true },    // ground slam you must dodge
 };
-function eyes(parent, y, z, sx = .15, r = .12) {
-  for (const s of [-1, 1]) { mesh(new THREE.SphereGeometry(r, 10, 8), 0xffffff, { roughness: .3 }, parent, s * sx, y, z, false);
-    mesh(new THREE.SphereGeometry(r * .5, 8, 6), 0x1a1a1a, { roughness: .2 }, parent, s * sx, y, z + r * .75, false); }
+// ---- shared geometry + materials (monsters spawn all night, so reuse instead of rebuilding)
+const GC = {};
+const gS = (r, w = 14, h = 10) => GC['s' + r + w + h] || (GC['s' + r + w + h] = new THREE.SphereGeometry(r, w, h));
+const gC = (a, b, h, s = 10) => GC['c' + a + b + h + s] || (GC['c' + a + b + h + s] = new THREE.CylinderGeometry(a, b, h, s));
+const gK = (r, h, s = 10) => GC['k' + r + h + s] || (GC['k' + r + h + s] = new THREE.ConeGeometry(r, h, s));
+const gB = (w, h, d) => GC['b' + w + h + d] || (GC['b' + w + h + d] = new THREE.BoxGeometry(w, h, d));
+const gL = (r, amt, seed) => GC['l' + r + amt + seed] || (GC['l' + r + amt + seed] = lumpy(new THREE.SphereGeometry(r, 14, 11), amt, 1.6 / Math.max(.3, r), seed));
+const SM = {};
+// skin: blotchy, pored, slightly bumpy; opts can swap the texture (rock, bark, metal) or add glow
+function M(c, o) { const k = c + JSON.stringify(o || 0); if (SM[k]) return SM[k]; const t = o && o.tex === 'rock' ? TEX.rock : o && o.tex === 'bark' ? TEX.bark : o && o.tex === 'none' ? null : TEX.skin;
+  const op = Object.assign({ color: c, roughness: .7, map: t, bumpMap: t, bumpScale: t ? .035 : 0 }, o || {}); delete op.tex; return SM[k] = new THREE.MeshStandardMaterial(op); }
+const glowM = (c, k = 1.2) => M(c, { tex: 'none', emissive: c, emissiveIntensity: k, roughness: .3 });
+const part = (geo, m, parent, x, y, z, sh = true) => mesh(geo, m, null, parent, x, y, z, sh);
+function eyes(parent, y, z, sx = .13, r = .085, iris = 0xd8a020, glow = false) {
+  for (const s of [-1, 1]) { part(gS(r, 12, 10), M(0xe8e0c0, { tex: 'none', roughness: .15 }), parent, s * sx, y, z, false);
+    part(gS(r * .62, 10, 8), glow ? glowM(iris, 1.6) : M(iris, { tex: 'none', roughness: .1 }), parent, s * sx, y, z + r * .5, false);
+    part(gS(r * .3, 8, 6), M(0x050505, { tex: 'none', roughness: .05 }), parent, s * sx, y, z + r * .8, false); }
+}
+// a muscled humanoid: torso, head with brow, nose, mouth and teeth, limbs with hands and claws
+function humanoid(inner, o) {
+  const legs = [], arms = [], sk = M(o.body, o.mat), hd = M(o.head, o.mat);
+  const tor = part(gS(.42), sk, inner, 0, .92, 0); tor.scale.set(1.05, 1.15, .82);
+  part(gS(.3), sk, inner, 0, 1.22, .08).scale.set(1.3, .7, .9);                                // chest / shoulders
+  if (o.cloth !== undefined) { part(gC(.37, .45, .34, 12), M(o.cloth, { tex: 'bark', bumpScale: .02 }), inner, 0, .6, 0); part(gC(.44, .44, .07, 12), M(0x3a2814, { tex: 'none', roughness: .5 }), inner, 0, .76, 0); }
+  part(gC(.13, .16, .2), hd, inner, 0, 1.36, 0);
+  const head = part(gS(.34), hd, inner, 0, 1.62, 0); head.scale.set(1, 1.06, .98);
+  if (o.face !== false) {
+    part(gB(.48, .07, .15), hd, inner, 0, 1.71, .26).rotation.x = .25;                            // brow ridge
+    const ns = part(gK(.065, .24, 8), hd, inner, 0, 1.6, .37); ns.rotation.x = Math.PI / 2 + .3;   // nose
+    part(gB(.22, .035, .04), M(0x1a0a0a, { tex: 'none' }), inner, 0, 1.47, .31);                   // mouth
+    for (const s of [-1, 1]) { const t = part(gK(.025, .08, 5), M(0xf0e8d0, { tex: 'none', roughness: .3 }), inner, s * .07, 1.5, .31, false); if (o.tusks) { t.scale.set(1.6, 2.4, 1.6); t.position.y = 1.53; } }
+    eyes(inner, 1.66, .27, .13, .075, o.iris || 0xd8a020, o.glowEyes);
+  }
+  for (const s of [-1, 1]) {
+    const lp = new THREE.Group(); lp.position.set(s * .18, .52, 0); inner.add(lp);
+    part(gC(.12, .1, .5), sk, lp, 0, -.22, 0); part(gB(.18, .09, .32), M(o.foot ?? 0x2a1c12, o.mat || { tex: 'bark' }), lp, 0, -.48, .05); legs.push(lp);
+    const ap = new THREE.Group(); ap.position.set(s * .5, 1.18, 0); inner.add(ap);
+    part(gS(.15), sk, ap, 0, 0, 0); part(gC(.1, .08, .5), sk, ap, 0, -.27, 0); part(gS(.11), hd, ap, 0, -.55, .02);
+    for (let c = -1; c <= 1; c++) part(gK(.02, .09, 5), M(0x2a2018, { tex: 'none', roughness: .3 }), ap, c * .05, -.63, .07, false).rotation.x = Math.PI * .85;
+    arms.push(ap);
+  }
+  return { legs, arms, head };
+}
+// four-legged beast (wolves, behemoth): body, chest, head + snout, ears, tail, four legs
+function quadruped(inner, c, opts = {}) {
+  const legs = [], sk = M(c, opts.mat), dk = M(new THREE.Color(c).multiplyScalar(.6).getHex(), opts.mat);
+  part(gS(.5), sk, inner, 0, 1, -.1).scale.set(.85, .78, 1.45);
+  part(gS(.44), sk, inner, 0, 1.05, .45).scale.set(1, 1.05, 1);
+  const head = new THREE.Group(); head.position.set(0, 1.35, .9); inner.add(head);
+  part(gS(.3), sk, head, 0, 0, -.02).scale.set(1, .92, 1.05);
+  part(gS(.17), sk, head, 0, -.04, .3).scale.set(.95, .78, 1.6);                          // tapered muzzle
+  part(gS(.045, 8, 6), M(0x0a0a0a, { tex: 'none', roughness: .25 }), head, 0, .02, .56, false);
+  part(gS(.13), dk, head, 0, -.15, .26).scale.set(.85, .4, 1.5);                          // lower jaw
+  for (const s of [-1, 1]) { part(gK(.018, .085, 5), M(0xf0e8d0, { tex: 'none' }), head, s * .06, -.1, .46, false).rotation.x = Math.PI;
+    const ear = part(gK(.075, .24, 6), dk, head, s * .15, .26, -.08); ear.rotation.z = -s * .3; ear.rotation.x = -.25; }
+  eyes(head, .08, .2, .14, .042, opts.iris || 0xffb020, true);
+  const tail = part(gC(.09, .03, .9, 8), sk, inner, 0, 1.15, -.95); tail.rotation.x = -1.1;
+  for (const [sx, sz] of [[-1, 1], [1, 1], [-1, -1], [1, -1]]) { const lp = new THREE.Group(); lp.position.set(sx * .24, .85, sz * .52 - .05); inner.add(lp);
+    part(gC(.1, .065, .8, 8), sk, lp, 0, -.36, 0); part(gS(.085, 8, 6), dk, lp, 0, -.78, .03); legs.push(lp); }
+  return { legs, head };
 }
 function buildMonsterMesh(type) {
-  const g = new THREE.Group(), inner = new THREE.Group(); g.add(inner); const legs = [], arms = [], wings = [];
-  const M = c => new THREE.MeshStandardMaterial({ color: c, flatShading: true, roughness: .8 });
-  if (type === 'bat') {
-    const col = pick([0x6fd6c8, 0xf59ac6, 0xb79cff]);
-    mesh(new THREE.SphereGeometry(.55, 14, 10), M(col), null, inner, 0, 0, 0);
-    mesh(new THREE.SphereGeometry(.38, 12, 8), M(0xfff0f5), null, inner, 0, -.1, .25).scale.z = .5;
-    eyes(inner, .12, .42, .18, .14);
-    for (const s of [-1, 1]) { const wp = new THREE.Group(); wp.position.set(s * .45, .1, 0); inner.add(wp);
-      const w = mesh(new THREE.BoxGeometry(.9, .06, .55), M(col), null, wp, s * .45, 0, 0); w.scale.z = .9; wings.push(wp);
-      mesh(new THREE.ConeGeometry(.1, .25, 5), M(col), null, inner, s * .22, .55, 0); }
+  const g = new THREE.Group(), inner = new THREE.Group(); g.add(inner); let legs = [], arms = [], wings = [];
+  if (type === 'bat') { // leathery wings with finger bones, big ears, glowing eyes
+    const fur = M(0x3a2a24), mem = M(0x2a1c1a, { side: THREE.DoubleSide, roughness: .6 });
+    part(gS(.38), fur, inner, 0, 0, 0).scale.set(1, 1.1, 1);
+    part(gS(.26), fur, inner, 0, .32, .22);
+    for (const s of [-1, 1]) { const e = part(gK(.1, .34, 6), fur, inner, s * .14, .6, .18); e.rotation.z = -s * .3; }
+    part(gK(.07, .14, 6), M(0x4a3430), inner, 0, .28, .48).rotation.x = Math.PI / 2;
+    eyes(inner, .38, .4, .1, .05, 0xff2020, true);
+    for (const s of [-1, 1]) { const wp = new THREE.Group(); wp.position.set(s * .3, .1, 0); inner.add(wp);
+      const w = part(gB(1.1, .02, .7), mem, wp, s * .58, 0, -.05); w.scale.z = .9;
+      for (let f = 0; f < 3; f++) { const b = part(gC(.02, .012, 1.1, 5), fur, wp, s * .55, .01, -.3 + f * .28); b.rotation.z = Math.PI / 2; b.rotation.y = s * (f - 1) * .25; }
+      wings.push(wp); }
     return { g, inner, legs, arms, wings };
   }
-  const o = type === 'goblin' ? { body: 0x6cc24a, head: 0x7ad35a, belly: 0x8b5a2b } : type === 'mushroom' ? { body: 0xf3e6c8, head: 0xf6ead0, belly: 0xe6d3a8 }
-    : type === 'archer' ? { body: 0x3f8f5a, head: 0x8fd36a, belly: 0x6b4423 } : type === 'mage' ? { body: 0x4a5ad8, head: 0xffd2b0, belly: 0x7a8aff } : type === 'king' ? { body: 0xb02a3a, head: 0xffd2b0, belly: 0xfff8ee } : { body: 0x8a5ac8, head: 0x9b6ad8, belly: 0xc8a8f0 };
-  const body = mesh(new THREE.SphereGeometry(.42, 12, 10), M(o.body), null, inner, 0, .85, 0); body.scale.set(1, 1.15, .9);
-  mesh(new THREE.SphereGeometry(.3, 10, 8), M(o.belly), null, inner, 0, .78, .2).scale.z = .5;
-  mesh(new THREE.SphereGeometry(.4, 14, 12), M(o.head), null, inner, 0, 1.55, 0);
-  eyes(inner, 1.6, .3);
-  for (const s of [-1, 1]) mesh(new THREE.SphereGeometry(.06, 6, 5), M(0xff9aa8), null, inner, s * .26, 1.46, .3, false);
-  if (type === 'goblin') for (const s of [-1, 1]) { const e = mesh(new THREE.ConeGeometry(.12, .45, 5), M(o.head), null, inner, s * .45, 1.65, 0); e.rotation.z = -s * 1.2; }
-  if (type === 'mushroom') { mesh(new THREE.SphereGeometry(.65, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2), M(pick([0xe04848, 0xe08a2a, 0x4a8ae0])), null, inner, 0, 1.7, 0).scale.y = .8;
-    for (let k = 0; k < 6; k++) { const a = k * 1.05 + R(0, .5); mesh(new THREE.SphereGeometry(.09, 6, 5), M(0xffffff), null, inner, Math.cos(a) * .42, 2.0, Math.sin(a) * .42, false); } }
-  if (type === 'brute') for (const s of [-1, 1]) { const h = mesh(new THREE.ConeGeometry(.08, .35, 6), M(0xfff2d0), null, inner, s * .22, 1.95, 0); h.rotation.z = -s * .3; }
-  for (const s of [-1, 1]) {
-    const lp = new THREE.Group(); lp.position.set(s * .18, .5, 0); inner.add(lp); mesh(new THREE.CylinderGeometry(.11, .11, .48, 6), M(o.body), null, lp, 0, -.22, 0); legs.push(lp);
-    const ap = new THREE.Group(); ap.position.set(s * .47, 1.05, 0); inner.add(ap); mesh(new THREE.CylinderGeometry(.09, .09, .48, 6), M(o.body), null, ap, 0, -.22, 0);
-    mesh(new THREE.SphereGeometry(.13, 8, 6), M(o.head), null, ap, 0, -.48, 0); arms.push(ap);
+  if (type === 'wolf') { const q = quadruped(inner, pick([0x5a5650, 0x4a4038, 0x6e6a64])); return { g, inner, legs: q.legs, arms, wings }; }
+  if (type === 'spider') {
+    const ch = M(0x2a221e), red = glowM(0xc01010, .6);
+    part(gS(.62), ch, inner, 0, .8, -.65).scale.set(1, .82, 1.2);
+    part(gS(.2), red, inner, 0, 1.25, -.65).scale.set(1, .3, 1.4);
+    part(gS(.36), ch, inner, 0, .65, .15).scale.set(1, .8, 1.1);
+    for (let k = 0; k < 6; k++) part(gS(.05, 8, 6), glowM(0xff2020, 1.4), inner, (k % 3 - 1) * .1, .78 + Math.floor(k / 3) * .07, .46, false);
+    for (const s of [-1, 1]) { const f = part(gK(.04, .2, 6), M(0x111111, { tex: 'none' }), inner, s * .07, .5, .44); f.rotation.x = Math.PI * .9; }
+    for (let k = 0; k < 8; k++) { const s = k % 2 ? 1 : -1, row = Math.floor(k / 2), lp = new THREE.Group(); lp.position.set(s * .25, .7, .35 - row * .25); lp.rotation.y = s * (row - 1.5) * .35; inner.add(lp);
+      const up = part(gC(.045, .035, .85, 6), ch, lp, s * .33, .22, 0); up.rotation.z = s * -1.05;
+      const lo = part(gC(.035, .015, 1, 6), ch, lp, s * .78, -.2, 0); lo.rotation.z = s * .35; legs.push(lp); }
+    return { g, inner, legs, arms, wings };
   }
-  if (type === 'archer') { // green hood + little bow
-    const hood = mesh(new THREE.ConeGeometry(.46, .6, 10), M(0x2f6f45), null, inner, 0, 1.95, -.05); hood.rotation.x = -.15;
-    for (const s of [-1, 1]) { const e = mesh(new THREE.ConeGeometry(.1, .35, 5), M(o.head), null, inner, s * .43, 1.6, 0); e.rotation.z = -s * 1.2; }
-    const bow = mesh(new THREE.TorusGeometry(.38, .03, 5, 12, Math.PI), M(0x8b5a2b), null, arms[0], 0, -.5, .15); bow.rotation.y = Math.PI / 2;
+  if (type === 'skeleton') {
+    const bone = M(0xd8d0b8, { tex: 'rock', bumpScale: .02, roughness: .6 });
+    part(gS(.3), bone, inner, 0, 1.64, 0).scale.set(1, 1.08, 1.05);
+    part(gB(.26, .1, .18), bone, inner, 0, 1.43, .08);
+    for (const s of [-1, 1]) { part(gS(.08, 8, 6), M(0x050505, { tex: 'none' }), inner, s * .11, 1.68, .24, false); part(gS(.03, 6, 5), glowM(0xff3020, 2), inner, s * .11, 1.68, .3, false); }
+    part(gC(.05, .05, .85, 6), bone, inner, 0, 1, -.05);
+    for (let k = 0; k < 4; k++) { const rb = part(new THREE.TorusGeometry(.24 - k * .02, .025, 5, 14, Math.PI * 1.4), bone, inner, 0, 1.28 - k * .12, 0); rb.rotation.x = Math.PI / 2; rb.rotation.z = -Math.PI * .2; }
+    part(gB(.38, .13, .2), bone, inner, 0, .6, 0);
+    for (const s of [-1, 1]) {
+      const lp = new THREE.Group(); lp.position.set(s * .14, .56, 0); inner.add(lp); part(gC(.04, .035, .52, 6), bone, lp, 0, -.24, 0); part(gB(.12, .06, .22), bone, lp, 0, -.5, .05); legs.push(lp);
+      const ap = new THREE.Group(); ap.position.set(s * .32, 1.32, 0); inner.add(ap); part(gS(.07, 8, 6), bone, ap, 0, 0, 0); part(gC(.035, .03, .52, 6), bone, ap, 0, -.27, 0); part(gS(.06, 8, 6), bone, ap, 0, -.55, 0); arms.push(ap); }
+    part(gC(.04, .04, .5, 6), bone, arms[1], 0, -.6, .12).rotation.x = Math.PI / 2; // a bone to throw
+    return { g, inner, legs, arms, wings };
   }
-  if (type === 'mage') { // pointy wizard hat with a star, glowing staff
-    mesh(new THREE.ConeGeometry(.45, .9, 12), M(0x3a2a9a), null, inner, 0, 2.15, 0);
-    mesh(new THREE.CylinderGeometry(.55, .55, .05, 14), M(0x3a2a9a), null, inner, 0, 1.75, 0);
-    mesh(new THREE.OctahedronGeometry(.09), new THREE.MeshBasicMaterial({ color: 0xffe066 }), null, inner, 0, 2.2, .3, false);
-    mesh(new THREE.CylinderGeometry(.03, .03, 1.2, 6), M(0x6b4423), null, arms[1], 0, -.35, .1);
-    mesh(new THREE.SphereGeometry(.11, 10, 8), new THREE.MeshBasicMaterial({ color: 0xff6ad5 }), null, arms[1], 0, .25, .1, false);
-    const gl = glowSprite(0xff6ad5, .8, .8); gl.position.set(0, .25, .1); arms[1].add(gl);
+  if (type === 'slime') {
+    const col = pick([0x4ac040, 0x40a0e0, 0xd04ad0]);
+    const jelly = new THREE.MeshStandardMaterial({ color: col, transparent: true, opacity: .72, roughness: .05, metalness: .05, emissive: new THREE.Color(col).multiplyScalar(.12) });
+    const b = part(gS(.62, 20, 14), jelly, inner, 0, .55, 0); b.scale.set(1, .82, 1); b.castShadow = true;
+    part(gS(.22), M(new THREE.Color(col).multiplyScalar(.5).getHex(), { tex: 'none', roughness: .3 }), inner, .08, .5, -.05, false);
+    eyes(inner, .72, .42, .16, .08, 0x101010, false);
+    return { g, inner, legs, arms, wings };
   }
+  if (type === 'golem') {
+    const rk = M(0x6e6a64, { tex: 'rock', bumpScale: .06, roughness: .9 }), moss = M(0x4a6a2a, { tex: 'bark' }), lava = glowM(0xff6a10, 1.5);
+    part(gL(.62, .12, 1), rk, inner, 0, 1.3, 0).scale.set(1.15, 1.15, .9);
+    part(gL(.32, .08, 2), rk, inner, 0, 2.08, .12);
+    for (const s of [-1, 1]) part(gS(.05, 8, 6), glowM(0xffa020, 2), inner, s * .1, 2.12, .4, false);
+    part(gS(.15), lava, inner, 0, 1.4, .5, false); const gl = glowSprite(0xff7a20, 1.4, .6); gl.position.set(0, 1.4, .6); inner.add(gl);
+    for (const s of [-1, 1]) { part(gL(.25, .08, 4), moss, inner, s * .52, 1.78, -.05).scale.y = .4;
+      const ap = new THREE.Group(); ap.position.set(s * .78, 1.7, 0); inner.add(ap);
+      part(gL(.28, .08, 5), rk, ap, 0, -.2, 0); part(gL(.3, .08, 6), rk, ap, 0, -.65, .05); part(gL(.32, .1, 7), rk, ap, 0, -1.05, .1); arms.push(ap);
+      const lp = new THREE.Group(); lp.position.set(s * .32, .75, 0); inner.add(lp); part(gL(.3, .08, 8), rk, lp, 0, -.3, 0); part(gB(.42, .2, .5), rk, lp, 0, -.66, .08); legs.push(lp); }
+    return { g, inner, legs, arms, wings };
+  }
+  // humanoids
+  const o = type === 'goblin' ? { body: 0x4f6b2c, head: 0x5d7a32, cloth: 0x5a3e22, iris: 0xe0c020 }
+    : type === 'archer' ? { body: 0x48632a, head: 0x587530, cloth: 0x3b2a1a, iris: 0xe0c020 }
+    : type === 'mage' ? { body: 0x2a2f6a, head: 0xc8a48a, cloth: 0x1e2250, iris: 0x60a0ff, glowEyes: true }
+    : type === 'king' ? { body: 0x8a1a28, head: 0xd8b090, cloth: 0x5a1020, iris: 0x4a3020 }
+    : type === 'mushroom' ? { body: 0xe6dcc0, head: 0xe8dcc4, face: false, foot: 0xc8b898 }
+    : { body: 0x7a6a5a, head: 0x8a7a68, cloth: 0x4a3420, iris: 0xd02010, tusks: true };
+  const h = humanoid(inner, o); legs = h.legs; arms = h.arms;
+  if (type === 'goblin' || type === 'archer') for (const s of [-1, 1]) { const e = part(gK(.1, .5, 6), M(o.head), inner, s * .42, 1.68, -.02); e.rotation.z = -s * 1.25; }
+  if (type === 'mushroom') { const capC = pick([0xb02a20, 0xa0581a, 0x6a3a8a]);
+    const cap = part(new THREE.SphereGeometry(.68, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2), M(capC, { roughness: .5 }), inner, 0, 1.72, 0); cap.scale.y = .75;
+    part(new THREE.CircleGeometry(.66, 18).rotateX(Math.PI / 2), M(0xd8c8a0, { side: THREE.DoubleSide }), inner, 0, 1.72, 0, false);
+    for (let k = 0; k < 7; k++) { const a = k * .9 + R(0, .4), rr = k ? .42 : 0; part(gS(.08, 8, 6), M(0xf4f0e8, { tex: 'none', roughness: .4 }), inner, Math.cos(a) * rr, k ? 2.0 : 2.22, Math.sin(a) * rr, false).scale.y = .5; }
+    eyes(inner, 1.55, .3, .12, .07, 0x201010); }
+  if (type === 'brute') { for (const s of [-1, 1]) { const hh = part(gK(.07, .36, 6), M(0xe8dcc0, { tex: 'none', roughness: .4 }), inner, s * .22, 1.94, 0); hh.rotation.z = -s * .35; }
+    part(gC(.05, .09, 1.1, 8), M(0x5a3e22, { tex: 'bark' }), arms[1], 0, -.75, .25).rotation.x = Math.PI / 2.4; } // club
+  if (type === 'archer') { // hood + bow
+    const hood = part(gK(.44, .62, 12), M(0x3b4a2a, { tex: 'bark', bumpScale: .02 }), inner, 0, 1.92, -.06); hood.rotation.x = -.18;
+    const bow = part(new THREE.TorusGeometry(.4, .025, 6, 16, Math.PI), M(0x6b4423, { tex: 'bark' }), arms[0], 0, -.5, .15); bow.rotation.y = Math.PI / 2; }
+  if (type === 'mage') { // wizard hat, beard, glowing staff
+    part(gK(.42, .95, 14), M(0x24245a, { tex: 'bark', bumpScale: .02 }), inner, 0, 2.2, -.03).rotation.x = -.12;
+    part(gC(.56, .56, .05, 18), M(0x24245a, { tex: 'bark', bumpScale: .02 }), inner, 0, 1.8, 0);
+    part(gK(.2, .45, 8), M(0xd8d8d8), inner, 0, 1.32, .26).rotation.x = Math.PI;
+    part(gC(.03, .035, 1.4, 6), M(0x4a2e1a, { tex: 'bark' }), arms[1], 0, -.35, .1);
+    part(gS(.11), glowM(0xff6ad5, 1.4), arms[1], 0, .38, .1, false);
+    const gl = glowSprite(0xff6ad5, .9, .8); gl.position.set(0, .38, .1); arms[1].add(gl); }
   if (type === 'king') { // golden crown, white beard, royal cape and sceptre
-    const gold = new THREE.MeshStandardMaterial({ color: 0xffd040, metalness: .8, roughness: .3, emissive: 0x553300 });
-    mesh(new THREE.CylinderGeometry(.3, .32, .2, 10, 1, true), gold, null, inner, 0, 1.92, 0);
-    for (let k = 0; k < 6; k++) { const a = k / 6 * Math.PI * 2; mesh(new THREE.ConeGeometry(.07, .2, 5), gold, null, inner, Math.cos(a) * .29, 2.1, Math.sin(a) * .29); }
-    mesh(new THREE.SphereGeometry(.07, 8, 6), new THREE.MeshBasicMaterial({ color: 0xff3060 }), null, inner, 0, 1.94, .31, false);
-    mesh(new THREE.ConeGeometry(.26, .45, 8), M(0xf4f4f4), null, inner, 0, 1.28, .26).rotation.x = Math.PI;
-    const cape = mesh(new THREE.BoxGeometry(.95, 1.1, .08), M(0x7a1a8a), null, inner, 0, .95, -.42); cape.rotation.x = .12;
-    mesh(new THREE.CylinderGeometry(.03, .03, 1.1, 6), gold, null, arms[1], 0, -.3, .1);
-    mesh(new THREE.SphereGeometry(.1, 10, 8), new THREE.MeshBasicMaterial({ color: 0x6be4ff }), null, arms[1], 0, .28, .1, false);
-  }
+    const gold = M(0xffd040, { tex: 'none', metalness: .9, roughness: .25 });
+    part(new THREE.CylinderGeometry(.3, .32, .2, 14, 1, true), gold, inner, 0, 1.92, 0);
+    for (let k = 0; k < 6; k++) { const a = k / 6 * Math.PI * 2; part(gK(.07, .2, 5), gold, inner, Math.cos(a) * .29, 2.1, Math.sin(a) * .29); }
+    part(gS(.07, 8, 6), glowM(0xff3060, .8), inner, 0, 1.94, .31, false);
+    part(gK(.26, .5, 10), M(0xeeeeee), inner, 0, 1.3, .25).rotation.x = Math.PI;
+    const cape = part(gB(.95, 1.15, .06), M(0x4a1060, { tex: 'bark', bumpScale: .015 }), inner, 0, .95, -.4); cape.rotation.x = .12;
+    part(gC(.03, .03, 1.1, 6), gold, arms[1], 0, -.3, .1);
+    part(gS(.1), glowM(0x6be4ff, 1), arms[1], 0, .28, .1, false); }
   return { g, inner, legs, arms, wings };
+}
+
+// ============================================================ BOSSES: 10 huge enemies, each guarding an altar and dropping its own unique item
+const BOSSES = {
+  titan: { name: 'Ember Titan', where: 'volcano', hp: 5200, dmg: 32, spd: 3.4, size: 3.2, glow: 0xff5a10, item: 'ember', coin: 420,
+    abil: [['slam', { r: 7, mult: 1.6, col: 0xff5a10, elem: 'fire', name: 'Magma Slam' }], ['rain', { n: 6, r: 3, col: 0xff6a20, fx: 'meteor', elem: 'fire', name: 'Meteor Rain' }], ['nova', { n: 16, col: 0xff7a2a, elem: 'fire', name: 'Fire Nova' }], ['summon', { type: 'golem', n: 1, name: 'Raise Golem' }]] },
+  wyrm: { name: 'Frost Wyrm', where: 'tundra', hp: 4600, dmg: 28, spd: 4.6, size: 2.8, glow: 0x9fe8ff, item: 'fang', coin: 400,
+    abil: [['breath', { col: 0x9fe8ff, elem: 'ice', name: 'Frost Breath' }], ['rain', { n: 7, r: 2.6, col: 0x9fe8ff, fx: 'spike', elem: 'ice', name: 'Ice Spikes' }], ['charge', { mult: 1.4, name: 'Glacier Charge' }], ['nova', { n: 14, col: 0xbff0ff, elem: 'ice', name: 'Blizzard Ring' }]] },
+  pharaoh: { name: 'Sand Pharaoh', where: 'desert', hp: 4200, dmg: 26, spd: 3.6, size: 2.8, glow: 0x40e0ff, item: 'ankh', coin: 450,
+    abil: [['summon', { type: 'skeleton', n: 3, name: 'Raise Mummies' }], ['volley', { n: 7, col: 0xffd040, spread: .9, name: 'Sun Bolts' }], ['teleport', { name: 'Sand Step' }], ['pools', { n: 4, col: 0xd8b060, elem: 'slow', r: 3.5, name: 'Quicksand' }]] },
+  queen: { name: 'Spore Queen', where: 'mushroom', hp: 4000, dmg: 24, spd: 3, size: 2.8, glow: 0x60ff90, item: 'spore', coin: 380,
+    abil: [['pools', { n: 5, col: 0x7be05a, elem: 'poison', r: 3.2, name: 'Toxic Bloom' }], ['summon', { type: 'mushroom', n: 3, name: 'Spawn Shroomies' }], ['nova', { n: 18, col: 0x9aff6a, elem: 'poison', name: 'Spore Burst' }], ['heal', { pct: .12, name: 'Regrow' }]] },
+  roc: { name: 'Storm Roc', where: 'sky', hp: 3800, dmg: 26, spd: 6.5, size: 2.2, glow: 0xfff26a, item: 'roc', coin: 420, fly: true,
+    abil: [['rain', { n: 6, r: 2.4, col: 0xfff26a, fx: 'bolt', elem: 'shock', name: 'Lightning Storm' }], ['charge', { mult: 1.5, name: 'Dive Bomb' }], ['volley', { n: 5, col: 0xfff6a0, spread: .5, elem: 'shock', name: 'Thunder Feathers' }], ['pull', { r: 30, push: true, name: 'Hurricane Gust' }]] },
+  colossus: { name: 'Stone Colossus', where: 'peak', hp: 7000, dmg: 38, spd: 2.6, size: 3.5, glow: 0x60b0ff, item: 'colossus', coin: 500,
+    abil: [['slam', { r: 8, mult: 1.8, col: 0x9a8a70, name: 'Earthquake' }], ['leap', { r: 6, mult: 1.6, name: 'Mountain Leap' }], ['rain', { n: 5, r: 3.2, col: 0x8a7a60, fx: 'boulder', name: 'Rockfall' }], ['summon', { type: 'golem', n: 2, name: 'Stone Children' }]] },
+  lich: { name: 'Shadow Lich', where: 'plains', hp: 3900, dmg: 30, spd: 3.4, size: 2.6, glow: 0x6aff9a, item: 'phylactery', coin: 460,
+    abil: [['summon', { type: 'skeleton', n: 4, name: 'Army of the Dead' }], ['volley', { n: 9, col: 0x6aff9a, spread: 1.2, elem: 'drain', name: 'Soul Drain' }], ['teleport', { name: 'Shadow Step' }], ['pull', { r: 26, name: 'Grave Pull' }]] },
+  kraken: { name: 'Abyss Kraken', where: 'water', hp: 5600, dmg: 30, spd: 0, size: 2.8, glow: 0xff60a0, item: 'tentacle', coin: 480, water: true,
+    abil: [['rain', { n: 6, r: 3, col: 0xff60a0, fx: 'tentacle', name: 'Tentacle Slam' }], ['volley', { n: 6, col: 0x402850, spread: .7, elem: 'slow', name: 'Ink Spit' }], ['pull', { r: 40, name: 'Whirlpool' }], ['pools', { n: 4, col: 0x201830, elem: 'slow', r: 3.5, name: 'Ink Cloud' }]] },
+  behemoth: { name: 'Void Behemoth', where: 'cave', hp: 6400, dmg: 36, spd: 4, size: 3, glow: 0xb06aff, item: 'abyss', coin: 520,
+    abil: [['charge', { mult: 1.6, name: 'Void Rampage' }], ['pull', { r: 24, name: 'Gravity Well' }], ['nova', { n: 20, col: 0xb06aff, elem: 'drain', name: 'Void Nova' }], ['slam', { r: 7, mult: 1.7, col: 0x8040ff, name: 'Abyssal Stomp' }]] },
+  treant: { name: 'Ancient Treant', where: 'forest', hp: 5000, dmg: 28, spd: 2.8, size: 3.3, glow: 0xffc040, item: 'heartwood', coin: 400,
+    abil: [['rain', { n: 7, r: 2.6, col: 0x6a4a2a, fx: 'roots', elem: 'root', name: 'Strangling Roots' }], ['summon', { type: 'wolf', n: 3, name: 'Call the Pack' }], ['heal', { pct: .1, name: 'Photosynthesis' }], ['slam', { r: 7, mult: 1.5, col: 0x6a8a3a, name: 'Trunk Smash' }]] },
+};
+function buildBossMesh(id) {
+  const g = new THREE.Group(), inner = new THREE.Group(); g.add(inner); let legs = [], arms = [], wings = [], tent = [];
+  const B = BOSSES[id], gl = c => glowM(c, 1.8);
+  const aura = glowSprite(B.glow, 2.2, .22); aura.position.y = 1.1; inner.add(aura);
+  if (id === 'titan') { const h = humanoid(inner, { body: 0x2a2220, head: 0x34261e, mat: { tex: 'rock', bumpScale: .07, roughness: .9 }, face: false, foot: 0x1a1412 }); legs = h.legs; arms = h.arms;
+    const lv = M(0x501000, { tex: 'none', emissive: 0xff3a00, emissiveIntensity: 1.1, roughness: .5 });
+    for (let k = 0; k < 7; k++) part(gB(.018, R(.22, .42), .02), lv, inner, R(-.25, .25), R(.75, 1.25), .37, false).rotation.z = R(-.7, .7);
+    for (const a of arms) part(gB(.016, .3, .016), lv, a, 0, -.3, .09, false);
+    for (const s of [-1, 1]) { part(gS(.045, 8, 6), M(0x802000, { tex: 'none', emissive: 0xff6a00, emissiveIntensity: 1.4 }), inner, s * .12, 1.66, .32, false); const hn = part(gK(.07, .4, 8), M(0x1a1412, { tex: 'rock' }), inner, s * .24, 1.95, 0); hn.rotation.z = -s * .5; }
+    const fh = glowSprite(0xff7020, 1.6, .9); fh.position.set(0, 1.95, 0); inner.add(fh);
+  } else if (id === 'colossus') { const h = humanoid(inner, { body: 0x8a8680, head: 0x7a7670, mat: { tex: 'rock', bumpScale: .08, roughness: .95 }, face: false, foot: 0x6a6660 }); legs = h.legs; arms = h.arms;
+    for (const s of [-1, 1]) { part(gB(.12, .05, .05), gl(0x60b0ff), inner, s * .12, 1.66, .32, false); part(gL(.2, .06, s + 3), M(0x4a6a2a, { tex: 'bark' }), inner, s * .5, 1.38, 0).scale.y = .5; }
+    part(gB(.22, .22, .06), gl(0x60b0ff), inner, 0, 1.12, .38, false); part(gB(.7, .14, .5), M(0x6a6660, { tex: 'rock' }), inner, 0, 1.36, 0);
+  } else if (id === 'pharaoh') { const h = humanoid(inner, { body: 0xd8c8a0, head: 0xb89870, cloth: 0x2050a0, iris: 0x40e0ff, glowEyes: true, mat: { tex: 'bark', bumpScale: .02 } }); legs = h.legs; arms = h.arms;
+    const gold = M(0xffcf40, { tex: 'none', metalness: .9, roughness: .25 }), blue = M(0x2050a0, { tex: 'none', metalness: .5, roughness: .3 });
+    part(gB(.8, .55, .5), gold, inner, 0, 1.78, -.08); for (let k = 0; k < 4; k++) part(gB(.82, .05, .52), blue, inner, 0, 1.6 + k * .12, -.08, false);
+    for (const s of [-1, 1]) part(gB(.16, .55, .18), gold, inner, s * .36, 1.4, .05);
+    part(new THREE.TorusGeometry(.42, .06, 6, 20, Math.PI), gold, inner, 0, 1.32, 0).rotation.x = Math.PI / 2;
+    part(gC(.03, .03, 1.6, 6), gold, arms[1], 0, -.3, .12); const ak = part(new THREE.TorusGeometry(.12, .03, 6, 14), gold, arms[1], 0, .62, .12); ak.rotation.y = Math.PI / 2;
+  } else if (id === 'lich') { const h = humanoid(inner, { body: 0x1a1424, head: 0xd8d0b8, iris: 0x6aff9a, glowEyes: true, face: false, mat: { tex: 'bark', bumpScale: .02 } }); legs = h.legs; arms = h.arms;
+    part(gK(.75, 1.7, 16), M(0x1a1424, { tex: 'bark', bumpScale: .02, side: THREE.DoubleSide }), inner, 0, .8, 0);
+    for (const s of [-1, 1]) { part(gS(.07, 8, 6), M(0x050505, { tex: 'none' }), inner, s * .12, 1.66, .27, false); part(gS(.045, 6, 5), gl(0x6aff9a), inner, s * .12, 1.66, .32, false); }
+    for (let k = 0; k < 7; k++) { const a = k / 7 * Math.PI * 2; part(gK(.05, .28, 5), M(0x2a2a2a, { tex: 'none', metalness: .8, roughness: .3 }), inner, Math.cos(a) * .3, 1.98, Math.sin(a) * .3); }
+    part(gC(.035, .035, 1.8, 6), M(0x2a2018, { tex: 'bark' }), arms[1], 0, -.3, .12); part(gS(.13), gl(0x6aff9a), arms[1], 0, .65, .12, false);
+    const sg = glowSprite(0x6aff9a, 1.2, .8); sg.position.set(0, .65, .12); arms[1].add(sg);
+  } else if (id === 'treant') {
+    const bark = M(0x5a4030, { tex: 'bark', bumpScale: .08, roughness: .95 }), leaf = new THREE.MeshStandardMaterial({ color: 0x3a6a24, map: TEX.leaf, bumpMap: TEX.leaf, bumpScale: .04, roughness: .85 });
+    part(gC(.42, .55, 1.6, 12), bark, inner, 0, 1.1, 0);
+    for (const s of [-1, 1]) { part(gS(.07, 8, 6), gl(0xffc040), inner, s * .14, 1.55, .4, false); }
+    for (let k = 0; k < 6; k++) part(gL(.55, .2, k + 20), leaf, inner, R(-.6, .6), 2.0 + R(0, .5), R(-.4, .4));
+    for (const s of [-1, 1]) { const ap = new THREE.Group(); ap.position.set(s * .5, 1.5, 0); inner.add(ap);
+      part(gC(.12, .07, 1.2, 8), bark, ap, 0, -.55, 0); for (let f = -1; f <= 1; f++) part(gC(.03, .01, .45, 5), bark, ap, f * .08, -1.2, .05).rotation.x = .4; part(gL(.3, .12, s + 30), leaf, ap, 0, .05, 0); arms.push(ap);
+      const lp = new THREE.Group(); lp.position.set(s * .25, .4, 0); inner.add(lp); part(gC(.16, .26, .5, 8), bark, lp, 0, -.2, 0); for (let r = 0; r < 3; r++) part(gC(.06, .02, .6, 5), bark, lp, s * .1 * r, -.4, .1 * r).rotation.z = s * (.8 + r * .3); legs.push(lp); }
+  } else if (id === 'queen') {
+    const stem = M(0xe0d4c0), cap = M(0x8a3a8a, { roughness: .5 });
+    part(gC(.36, .5, 1.4, 14), stem, inner, 0, .9, 0);
+    const cp = part(new THREE.SphereGeometry(1.1, 22, 12, 0, Math.PI * 2, 0, Math.PI / 2), cap, inner, 0, 1.75, 0); cp.scale.y = .7;
+    part(new THREE.CircleGeometry(1.08, 22).rotateX(Math.PI / 2), M(0xd8b8d8, { side: THREE.DoubleSide }), inner, 0, 1.75, 0, false);
+    for (let k = 0; k < 12; k++) { const a = k * .52 + R(0, .3), rr = R(.35, .85); part(gS(.1, 8, 6), gl(0x60ff90), inner, Math.cos(a) * rr, 1.75 + .7 * Math.sqrt(Math.max(0, 1 - rr * rr / 1.21)) * .95, Math.sin(a) * rr, false); }
+    eyes(inner, 1.4, .36, .14, .09, 0x60ff90, true);
+    for (let k = 0; k < 4; k++) { const s = k % 2 ? 1 : -1, ap = new THREE.Group(); ap.position.set(s * .4, 1.2 - Math.floor(k / 2) * .3, 0); inner.add(ap); part(gC(.07, .04, .8, 6), stem, ap, 0, -.35, 0); arms.push(ap); }
+    for (const s of [-1, 1]) { const lp = new THREE.Group(); lp.position.set(s * .25, .3, 0); inner.add(lp); part(gS(.25), stem, lp, 0, -.1, 0).scale.y = .6; legs.push(lp); }
+    for (let k = 0; k < 6; k++) { const sp = glowSprite(0x9aff6a, .5, .6); sp.position.set(R(-1.2, 1.2), R(.5, 2.5), R(-1.2, 1.2)); inner.add(sp); }
+  } else if (id === 'wyrm' || id === 'behemoth') {
+    const c = id === 'wyrm' ? 0x5a9ac0 : 0x2a1a3a, q = quadruped(inner, c, { iris: id === 'wyrm' ? 0x9fe8ff : 0xb06aff, mat: { roughness: .45, bumpScale: .05 } }); legs = q.legs;
+    const horn = M(id === 'wyrm' ? 0xe8f6ff : 0x8a70a0, { tex: 'none', roughness: .3 });
+    for (const s of [-1, 1]) { const hn = part(gK(.06, .5, 8), horn, q.head, s * .14, .3, -.2); hn.rotation.x = -1; hn.rotation.z = -s * .3; }
+    for (let k = 0; k < 6; k++) part(gK(.07, .25, 6), horn, inner, 0, 1.45 - k * .02, .4 - k * .28);
+    if (id === 'wyrm') { const mem = new THREE.MeshStandardMaterial({ color: 0x9fd8ff, transparent: true, opacity: .75, side: THREE.DoubleSide, roughness: .2, metalness: .1 });
+      for (const s of [-1, 1]) { const wp = new THREE.Group(); wp.position.set(s * .35, 1.4, .1); inner.add(wp); part(gB(1.8, .03, 1), mem, wp, s * .9, 0, -.2); part(gC(.04, .02, 1.9, 5), horn, wp, s * .9, .02, .3).rotation.z = Math.PI / 2; wings.push(wp); }
+      for (let k = 0; k < 5; k++) part(gS(.3 - k * .05), M(c, { roughness: .45 }), inner, 0, 1.05 - k * .08, -.95 - k * .38); }
+    else { part(gS(.35), gl(0xb06aff), inner, 0, 1.25, .1, false); const vg = glowSprite(0xb06aff, 2.4, .8); vg.position.set(0, 1.3, .1); inner.add(vg);
+      for (const s of [-1, 1]) { const hn = part(new THREE.TorusGeometry(.3, .07, 6, 12, Math.PI * 1.2), horn, q.head, s * .25, .25, 0); hn.rotation.y = Math.PI / 2; } }
+  } else if (id === 'roc') {
+    const fea = M(0x5a4a3a, { tex: 'bark', bumpScale: .02 }), wh = M(0xe8e0d0, { tex: 'bark', bumpScale: .02 }), gold = M(0xe0a020, { tex: 'none', roughness: .3 });
+    part(gS(.6), fea, inner, 0, 0, 0).scale.set(.8, .75, 1.3);
+    part(gS(.32), wh, inner, 0, .3, .72); const bk = part(gK(.1, .36, 8), gold, inner, 0, .22, 1.05); bk.rotation.x = Math.PI / 2 + .35;
+    eyes(inner, .38, .96, .14, .05, 0xfff26a, true);
+    for (const s of [-1, 1]) { const wp = new THREE.Group(); wp.position.set(s * .4, .15, 0); inner.add(wp);
+      for (let f = 0; f < 6; f++) part(gB(.9, .03, .26), f < 3 ? fea : wh, wp, s * (.4 + f * .32), 0, -.25 + f * .05).rotation.y = s * -f * .12; wings.push(wp);
+      const lp = new THREE.Group(); lp.position.set(s * .2, -.45, .1); inner.add(lp); part(gC(.05, .04, .5, 6), gold, lp, 0, -.2, 0); for (let t = -1; t <= 1; t++) part(gK(.03, .15, 5), M(0x1a1a1a, { tex: 'none' }), lp, t * .06, -.48, .06).rotation.x = Math.PI * .8; legs.push(lp); }
+    for (let f = 0; f < 5; f++) part(gB(.16, .03, .8), fea, inner, (f - 2) * .12, .02, -1.1).rotation.y = (f - 2) * .2;
+  } else if (id === 'kraken') {
+    const sk = M(0x6a2a3a, { roughness: .35, bumpScale: .05 }), sk2 = M(0x8a3a4a, { roughness: .35 });
+    part(gS(1, 22, 16), sk, inner, 0, 1.7, -.2).scale.set(1, 1.45, 1);
+    for (const s of [-1, 1]) { part(gS(.24), M(0xffd040, { tex: 'none', emissive: 0xff8a00, emissiveIntensity: .9 }), inner, s * .45, 1.1, .7, false); part(gB(.05, .26, .05), M(0x050505, { tex: 'none' }), inner, s * .45, 1.1, .92, false); }
+    for (let k = 0; k < 8; k++) { const a = k / 8 * Math.PI * 2, tg = new THREE.Group(); tg.position.set(Math.cos(a) * .7, .6, Math.sin(a) * .7); tg.rotation.y = -a; inner.add(tg);
+      for (let s = 0; s < 8; s++) part(gS(.2 - s * .02, 10, 8), s % 2 ? sk2 : sk, tg, .25 + s * .28, -.12 * s + .05 * s * s * .2, 0, s < 3); tent.push(tg); }
+  }
+  return { g, inner, legs, arms, wings, tent };
 }
 const monsters = [];
 const barGeo = new THREE.PlaneGeometry(1, .13).translate(.5, 0, 0);
@@ -1661,7 +2057,7 @@ const kingAlive = () => monsters.some(m => !m.dead && m.d.king);
 function spawnMonster(opts = {}) {
   const tot = Object.values(MTYPES).reduce((a, b) => a + b.w, 0); let r = rand() * tot, type = 'goblin';
   for (const k in MTYPES) { r -= MTYPES[k].w; if (r <= 0) { type = k; break; } }
-  if (type === 'brute' && dayNum < 2 && rand() < .5) type = 'goblin';
+  if (type === 'brute' && dayNum < 2 && rand() < .5) type = 'goblin'; if (type === 'golem' && dayNum < 2 && !opts.zone) type = 'brute';
   if (!opts.type && !opts.minion && !kingAlive() && rand() < (opts.zone ? .05 : .04)) type = 'king'; // rare!
   if (opts.type) type = opts.type;
   let x = opts.x, z = opts.z, ok = x !== undefined;
@@ -1673,7 +2069,7 @@ function spawnMonster(opts = {}) {
   if (!ok) return;
   // every day monsters get MUCH stronger: x1.7 health, x1.3 damage, a bit bigger and faster
   const lvl = dayNum - 1 + (opts.lvlBonus || 0), d = MTYPES[type], parts = buildMonsterMesh(type), hpMul = Math.pow(1.7, lvl), dmgMul = Math.pow(1.3, lvl);
-  const sz = d.size * (1 + Math.min(.5, .08 * lvl));
+  const sz = d.size * (1 + Math.min(.5, .08 * lvl)) * (opts.mini ? .55 : 1);
   parts.inner.scale.setScalar(sz);
   const barCol = new THREE.Color().setHSL(Math.max(0, .0 - lvl * .04 + 1) % 1, .85, .58);
   const bar = new THREE.Group(); const bg = new THREE.Mesh(barGeo, new THREE.MeshBasicMaterial({ color: 0x222222 })); const fg = new THREE.Mesh(barGeo, new THREE.MeshBasicMaterial({ color: barCol }));
@@ -1683,7 +2079,7 @@ function spawnMonster(opts = {}) {
   parts.g.position.set(x, d.fly ? y + 5 : y, z); scene.add(parts.g);
   monsters.push(Object.assign(parts, { type, d, sz, lvl, x, z, y: parts.g.position.y, hp: d.hp * hpMul, max: d.hp * hpMul, dmg: d.dmg * dmgMul, spd: d.spd * R(.9, 1.1) * Math.min(1.5, 1 + .06 * lvl), r: .5 * sz, fly: !!d.fly,
     cd: 1, kx: 0, kz: 0, burn: 0, burnDps: 0, burnTick: 0, poison: 0, poisonDps: 0, poisonTick: 0, stun: 0, slow: 0, root: 0, fear: 0, mark: 0, markLvl: 0, strafe: rand() < .5 ? 1 : -1, flash: 0, phase: rand() * 6, bar, fg, dead: false, atk: 0, wanderA: rand() * 6.28 }));
-  const m = monsters[monsters.length - 1]; m.cave = Zn || null; m.summonT = R(2, 4);
+  const m = monsters[monsters.length - 1]; m.cave = Zn || null; m.summonT = R(2, 4); if (opts.mini) { m.mini = true; m.hp = m.max = m.max * .35; m.coinMul = .3; }
   if (d.king) { m.spd = Math.min(6.3, m.spd); const crownGl = glowSprite(0xffd84a, 3.2 * sz, .7); crownGl.position.y = 2 * sz; parts.g.add(crownGl);
     toast('👑 <b style="color:#ffd84a">A KING appeared!</b> It runs away and summons monsters — catch it for big loot!', 4500);
     [523, 659, 784].forEach((f, k) => setTimeout(() => sfx(f, .25, 'triangle', .06, 1), k * 120)); }
@@ -1714,15 +2110,34 @@ function applyHit(m, dmg, T, dir, opts = {}) {
   if (T.wind && T.spark && !opts.splash && rand() < .25) { const sc = mCenter(m); lightning(sc.clone().add(new V3(R(-1, 1), 16, R(-1, 1))), sc); flash(sc, 0xfff7a0, 7, .3); sfx(80, .4, 'sawtooth', .07, .5); // STORM CALLER
     for (const o of monsters) if (!o.dead && o !== m && Math.hypot(o.x - m.x, o.z - m.z) < 4) applyHit(o, dmg * .8, {}, null, { splash: true }); }
   if (m.mark > 0) dmg *= 1 + .2 * m.markLvl; // cursed by the evil eye
+  if (T.fang && m.slow > 0) dmg *= 1 + .6 * T.fang; // WYRM FANG shatters frozen enemies
   m.hp -= dmg; m.flash = .15; m.bar.visible = true;
   const c = mCenter(m);
+  // ---- boss item powers
+  if (T.ember) { m.burn = 4; m.burnDps = Math.max(m.burnDps, dmg * .4 * T.ember);
+    if (!opts.splash && rand() < .25) { flash(c, 0xff6a1a, 7, .35); burst(c, 0xff8a30, 16, 7, .6, -3, 1.3); sfx(110, .3, 'sawtooth', .05, .4);
+      for (const o of monsters.slice()) if (o !== m && !o.dead && Math.hypot(o.x - m.x, o.z - m.z) < 3.5 + T.ember) applyHit(o, dmg * .8, { fire: 1 }, null, { splash: true, noExplode: true }); } }
+  if (T.fang) { m.slow = Math.max(m.slow, 3); if (!opts.splash && rand() < .3) { m.stun = Math.max(m.stun, 1.2); burst(c, 0xdff6ff, 10, 4, .6, 3); } }
+  if (T.ankh) m.ankh = T.ankh;
+  if (T.spore) { m.poison = 6; m.poisonDps = Math.max(m.poisonDps, dmg * .3 * T.spore); player.hp = Math.min(player.max, player.hp + dmg * .04 * T.spore);
+    if (!opts.splash && rand() < .3) addHazard(m.x, m.y, m.z, 2.5, 4, dmg * .3, { poison: 1 }, 0x7be05a); }
+  if (T.roc && !opts.splash && rand() < .3) { lightning(c.clone().add(new V3(R(-1, 1), 18, R(-1, 1))), c); flash(c, 0xfff7a0, 6, .3); sfx(90, .35, 'sawtooth', .06, .5);
+    for (const o of monsters.slice()) if (o !== m && !o.dead && Math.hypot(o.x - m.x, o.z - m.z) < 3 + T.roc) applyHit(o, dmg * .7, { spark: 1 }, null, { splash: true, chain: true, noExplode: true }); }
+  if (T.colossus && !opts.splash) { flash(c, 0xc8b890, 5, .3);
+    for (const o of monsters.slice()) { if (o === m || o.dead) continue; const ox = o.x - m.x, oz = o.z - m.z, od = Math.hypot(ox, oz); if (od < 4.5) { o.kx += ox / (od || 1) * 10; o.kz += oz / (od || 1) * 10; applyHit(o, dmg * .4, {}, null, { splash: true, noExplode: true }); } } }
+  if (T.phylactery) player.hp = Math.min(player.max, player.hp + dmg * .08 * T.phylactery);
+  if (T.tentacle && !opts.splash) { const grab = monsters.filter(o => o !== m && !o.dead && !o.boss && Math.hypot(o.x - m.x, o.z - m.z) < 7).slice(0, 2 + T.tentacle);
+    for (const o of grab) { o.kx = (m.x - o.x) * 2.6; o.kz = (m.z - o.z) * 2.6; o.stun = Math.max(o.stun, .8); const oc = mCenter(o); for (let k = 0; k <= 5; k++) burst(oc.clone().lerp(c, k / 5), 0xe070a0, 1, .5, .4, 0); applyHit(o, dmg * .35, {}, null, { splash: true, noExplode: true }); } }
+  if (T.abyss && !opts.splash) { player.abyssN = (player.abyssN || 0) + 1; if (player.abyssN >= 5) { player.abyssN = 0;
+    addHazard(m.x, m.y, m.z, 3.2, 2.4, dmg * .7 * T.abyss, {}, 0x6a20c0); hazards[hazards.length - 1].pull = 9 + T.abyss; flash(c, 0xb06aff, 9, .5); sfx(60, .8, 'sine', .08, .3); } }
+  if (T.heartwood) { m.root = Math.max(m.root, 1.4); burst(c, 0x6a8a3a, 6, 2, .5, 3); }
   if (T.eye) { m.mark = 4; m.markLvl = Math.max(m.markLvl, T.eye); burst(c, 0x9a40ff, 5, 2, .5, -1); }
   if (T.web) { m.root = Math.max(m.root, 1 + .5 * T.web); burst(c, 0xffffff, 6, 2, .5, 3); }
   if (T.horn) { m.fear = Math.max(m.fear, 1.5 + .7 * T.horn); }
   if (T.bell && !opts.splash) { sfx(1500, .25, 'sine', .04, .9);
     for (const o of monsters) if (o !== m && !o.dead && Math.hypot(o.x - m.x, o.z - m.z) < 3 + T.bell) applyHit(o, dmg * .4, T, null, { splash: true, chain: true, noExplode: true });
     flash(c, 0xffe080, 6 + T.bell * 2, .3); }
-  if (T.skull && m.hp > 0 && m.hp < m.max * Math.min(.4, .12 * T.skull)) { dmgText(c.clone().add(new V3(0, 1.2 * m.sz, 0)), '💀 FINISHED', '#e0c0ff', 20); m.hp = 0; }
+  if (T.skull && !m.boss && m.hp > 0 && m.hp < m.max * Math.min(.4, .12 * T.skull)) { dmgText(c.clone().add(new V3(0, 1.2 * m.sz, 0)), '💀 FINISHED', '#e0c0ff', 20); m.hp = 0; }
   if (dir) { const kb = (T.rock ? 10 : 4.5) * (1 + (T.wind || 0)) * (T.hammer ? 2 : 1) / m.sz; m.kx += dir.x * kb; m.kz += dir.z * kb; }
   if (T.fire) { m.burn = 3; m.burnDps = Math.max(m.burnDps * (m.burn > 0 ? 1 : 0), dmg * .25 * T.fire); burst(c, 0xff7a1a, 6, 3, .5, -2); }
   if (T.poison) { m.poison = 5; m.poisonDps = Math.max(m.poisonDps, dmg * .15 * T.poison); burst(c, 0x7be05a, 6, 2, .6, -1); }
@@ -1743,7 +2158,7 @@ function applyHit(m, dmg, T, dir, opts = {}) {
 function explode(pos, radius, dmg, T) {
   flash(pos, 0xffa040, radius * 3, .35); burst(pos, 0xff8a30, 16, 8, .6, 4, 1.4); burst(pos, 0x555555, 10, 5, .8, -1, 1.6);
   sfx(90, .35, 'sawtooth', .08, .3);
-  if (T.void) { for (const m of monsters) { if (m.dead) continue; const d = Math.hypot(m.x - pos.x, m.z - pos.z); if (d < radius * 2.2 && d > .5) { m.x = lerp(m.x, pos.x, .7); m.z = lerp(m.z, pos.z, .7); } } flash(pos, 0x6a20c0, radius * 4, .4); }
+  if (T.void) { for (const m of monsters) { if (m.dead || m.boss) continue; const d = Math.hypot(m.x - pos.x, m.z - pos.z); if (d < radius * 2.2 && d > .5) { m.x = lerp(m.x, pos.x, .7); m.z = lerp(m.z, pos.z, .7); } } flash(pos, 0x6a20c0, radius * 4, .4); }
   if (T.poison && T.bomb) addHazard(pos.x, groundAt(pos.x, pos.z, pos.y + 1), pos.z, radius * .9, 4, dmg * .25, { poison: T.poison }, 0x7be05a); // PLAGUE BOMB
   if (T.dig && !underCave(pos)) { const g = groundAt(pos.x, pos.z, pos.y + 1); if (pos.y - g < radius + 1) deformTerrain(pos.x, pos.z, radius * 1.15, radius * .75 * T.dig); }
   const T2 = Object.assign({}, T); delete T2.bomb; delete T2.spark; delete T2.dig; delete T2.void;
@@ -1755,18 +2170,247 @@ function killMonster(m) {
   // coins: stronger monsters (later nights, bigger types) give much more
   { const T = curT();
     if (T.heart && T.skull) { const hl = player.max * .15; player.hp = Math.min(player.max, player.hp + hl); dmgText(eyePos().addScaledVector(lookDir(), 2), '+' + Math.round(hl), '#ff6b9a', 20); }
-    if (T.ghost) for (let g = 0; g < (T.skull ? 3 : 1); g++) setTimeout(() => { const t = nearestMonster(c, 18, o => !o.dead); if (!t) return; const tc = mCenter(t);
-      for (let k = 0; k <= 6; k++) burst(c.clone().lerp(tc, k / 6), 0xe8e8ff, 2, 1, .5, -1); applyHit(t, heldPower() * (1 + .5 * T.ghost), {}, null, { splash: true }); flash(tc, 0xd0d0ff, 3, .3); }, 250 + g * 200); }
-  const gold = Math.max(1, Math.round(m.d.coin * Math.pow(1.6, m.lvl) * (1 + .3 * (curT().coins || 0) + .25 * (curT().crown || 0)) * R(.85, 1.15)));
+    const nGhost = (T.ghost ? (T.skull ? 3 : 1) : 0) + (T.phylactery ? 2 : 0), gcol = T.phylactery ? 0x9affc0 : 0xe8e8ff;
+    for (let g = 0; g < nGhost; g++) setTimeout(() => { const t = nearestMonster(c, 18, o => !o.dead); if (!t) return; const tc = mCenter(t);
+      for (let k = 0; k <= 6; k++) burst(c.clone().lerp(tc, k / 6), gcol, 2, 1, .5, -1); applyHit(t, heldPower() * (1 + .5 * ((T.ghost || 0) + (T.phylactery || 0))), {}, null, { splash: true }); flash(tc, gcol, 3, .3); }, 250 + g * 200);
+    if (m.ankh && T.ankh) { flash(c, 0xffd890, 9, .4); burst(c, 0xe0c080, 24, 8, .8, 4, 1.4); sfx(140, .35, 'sawtooth', .05, .5); // PHARAOH ANKH: sand blast
+      for (const o of monsters.slice()) if (!o.dead && o !== m && Math.hypot(o.x - m.x, o.z - m.z) < 5.5) applyHit(o, heldPower() * 2 * T.ankh, {}, new V3(o.x - m.x, 0, o.z - m.z).normalize(), { splash: true, noExplode: true }); } }
+  const gold = Math.max(1, Math.round(m.d.coin * (m.coinMul || 1) * Math.pow(1.6, m.lvl) * (1 + .3 * (curT().coins || 0) + .25 * (curT().crown || 0) + .5 * (curT().ankh || 0)) * R(.85, 1.15)));
+  if (m.boss) { bossDefeated(m, c); return; }
+  if (m.d.splits && !m.mini) for (let k = 0; k < 2; k++) spawnMonster({ type: 'slime', x: m.x + (k ? 1 : -1), z: m.z + R(-.5, .5), minion: true, mini: true, zone: m.cave });
   if (m.d.king) { // big money + a super rare item (sometimes already merged)
     spawnCoins(gold, m.x, m.y, m.z); let it = baseItem(pick(RARE_KEYS)); const nm = Math.floor(rand() * 3); for (let k = 0; k < nm; k++) it = mergeItems(it, baseItem(randomBaseKey(NONBAG)));
-    spawnLoot(it, m.x, m.z, true, 1); flash(c, 0xffd84a, 12, .6);
+    spawnLoot(it, m.x, m.z, true, 1); flash(c, 0xffd84a, 12, .6); if (rand() < .3) spawnLoot(baseItem('voidcore'), m.x + 1, m.z, true, 1);
     toast(`👑 <b style="color:#ffd84a">King defeated!</b> +🪙 ${gold} and a super rare item!`, 4000); [784, 988, 1175, 1568].forEach((f, k) => setTimeout(() => sfx(f, .25, 'triangle', .06, 1), k * 100)); return; }
   if (curT().coins && curT().gem) spawnCoins(Math.max(2, Math.round(gold * .5)), m.x, m.y, m.z); // MIDAS TOUCH
   addCoins(gold, c);
   if (rand() < (m.type === 'brute' ? 1 : .6)) { // stronger monsters drop better (pre-merged) loot
     let n = 0; while (n < Math.min(3, m.lvl) && rand() < .5) n++; const it = lootItem(n);
     spawnLoot(it, m.x, m.z, true, 1); }
+}
+// ============================================================ boss system: altars (lairs), 4-ability AI, warning circles, ground hazards
+const lairs = [];
+let shake = 0;
+function placeLairs() {
+  const far = (x, z) => Math.hypot(x, z) > 60 && Math.abs(x) < HALF - 28 && Math.abs(z) < HALF - 28 && !lairs.some(L => Math.hypot(L.x - x, L.z - z) < 45) && !caveZones.some(Z => Math.hypot(Z.ent.x - x, Z.ent.z - z) < 14);
+  const flat = (x, z) => { const h = getH(x, z); return h > WATER + 1.5 && slopeAt(x, z) < .38 ? h : null; };
+  for (const id in BOSSES) { const B = BOSSES[id]; let s = null, zone = null, shore = null;
+    if (['volcano', 'desert', 'tundra', 'mushroom', 'sky'].includes(B.where)) { const b = biomes.find(b => b.type === B.where);
+      if (b) for (let k = 0; k < 250 && !s; k++) { const a = rand() * 6.28, d = R(15, b.r + 4), x = b.x + Math.cos(a) * d, z = b.z + Math.sin(a) * d, h = flat(x, z);
+        if (h !== null && far(x, z) && !lavaPools.some(p => Math.hypot(p.x - x, p.z - z) < p.r + 8) && !structures.some(st => st.kind !== 'biome' && Math.hypot(st.x - x, st.z - z) < st.r + 9)) s = { x, z, h }; } }
+    else if (B.where === 'cave') { zone = caveZones.find(Z => Z.type === 'ruins') || caveZones[caveZones.length - 1];
+      if (zone) { const a = Math.atan2(zone.exit.z - zone.z, zone.exit.x - zone.x) + Math.PI; s = { x: zone.x + Math.cos(a) * 16, z: zone.z + Math.sin(a) * 16, h: zone.floor }; } }
+    else if (B.where === 'peak') { let best = null; for (let k = 0; k < 1500; k++) { const x = R(-HALF + 40, HALF - 40), z = R(-HALF + 40, HALF - 40), h = getH(x, z);
+        if (h > 20 && h < 70 && slopeAt(x, z) < .3 && far(x, z) && freeSpot(x, z, 12) && (!best || h > best.h)) best = { x, z, h }; } s = best; }
+    else if (B.where === 'water') { for (let k = 0; k < 4000 && !s; k++) { const x = R(-HALF + 40, HALF - 40), z = R(-HALF + 40, HALF - 40);
+        if (getH(x, z) > WATER - 4 || !far(x, z)) continue; for (let a = 0; a < 16; a++) { const sx = x + Math.cos(a * .39) * 17, sz = z + Math.sin(a * .39) * 17; if (flat(sx, sz) !== null) { s = { x, z, h: WATER }; shore = { x: sx, z: sz }; break; } } } }
+    else for (let k = 0; k < 300 && !s; k++) { const p = landSpot(WATER + 2.5, B.where === 'forest' ? 24 : 16, .28, 13, 70, 5); if (p && far(p.x, p.z)) s = p; }
+    if (!s) for (let k = 0; k < 300 && !s; k++) { const p = landSpot(WATER + 2, 30, .35, 12, 60, 5); if (p && far(p.x, p.z)) s = p; }
+    if (!s) continue;
+    const L = { id, B, x: s.x, z: s.z, y: zone ? zone.floor : B.water ? WATER : s.h, zone, shore: shore || { x: s.x, z: s.z }, boss: null, defeated: false, lvl: 0 };
+    lairs.push(L); buildLair(L); if (!zone) structures.push({ x: s.x, z: s.z, r: B.water ? 6 : 13, kind: 'lair' });
+  }
+}
+function buildLair(L) {
+  const B = L.B, g = new THREE.Group(); L.g = g;
+  if (L.zone) { L.zone.group.add(g); g.position.set(L.x - L.zone.x, 0, L.z - L.zone.z); } else { g.position.set(L.x, L.y, L.z); scene.add(g); }
+  const stone = M(0x5a5652, { tex: 'rock', bumpScale: .08, roughness: .95 }), gl = glowM(B.glow, 1.6);
+  if (!B.water) {
+    for (let k = 0; k < 7; k++) { const a = k / 7 * Math.PI * 2, px = Math.cos(a) * 8.5, pz = Math.sin(a) * 8.5, hh = R(3, 4.6), gy = L.zone ? 0 : getH(L.x + px, L.z + pz) - L.y;
+      const st = part(lumpy(new THREE.BoxGeometry(1.1, hh, .8, 2, 4, 2), .12, 1.2, k), stone, g, px, gy + hh / 2 - .3, pz); st.rotation.y = -a + R(-.2, .2); st.rotation.z = R(-.08, .08);
+      part(gB(.5, .16, .05), gl, st, 0, hh * .2, .42, false);
+      circles.push(L.zone ? yb({ x: L.x + px, z: L.z + pz, r: .7 }, L.y - 1, L.y + 6) : { x: L.x + px, z: L.z + pz, r: .7 }); }
+    part(gC(1.4, 1.8, .6, 12), stone, g, 0, .2, 0);
+    part(gC(.5, .7, 1.4, 10), M(0x1a1420, { tex: 'rock', roughness: .35, metalness: .3 }), g, 0, 1.1, 0);
+    circles.push(L.zone ? yb({ x: L.x, z: L.z, r: 1.6 }, L.y - 1, L.y + 3) : { x: L.x, z: L.z, r: 1.6 });
+    if (L.zone) { const decal = new THREE.Mesh(new THREE.RingGeometry(9.5, 10.5, 48).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: B.glow, transparent: true, opacity: .3, depthWrite: false })); decal.position.y = .1; g.add(decal); }
+  } else { const ring = new THREE.Mesh(new THREE.RingGeometry(3, 6, 40).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: B.glow, transparent: true, opacity: .35, depthWrite: false })); ring.position.y = .15; g.add(ring); L.ring = ring; }
+  L.orb = part(gS(.42), gl, g, 0, B.water ? 1 : 2.2, 0, false);
+  const og = glowSprite(B.glow, 4, .8); og.position.y = B.water ? 1 : 2.2; g.add(og); L.og = og;
+  const bh = L.zone ? 14 : 46, beam = glowSprite(B.glow, 1, .45); beam.scale.set(3, bh, 1); beam.position.y = bh / 2; g.add(beam); L.beam = beam;
+}
+function updateLair(L, dt) {
+  if (L.boss && L.boss.dead && !L.defeated) L.boss = null; // wandered off / reset: the altar wakes again
+  const idle = !L.defeated && !L.boss; L.beam.visible = idle; L.og.visible = !L.defeated; L.orb.visible = !L.defeated;
+  if (L.orb.visible) { L.orb.position.y = (L.B.water ? 1 : 2.2) + Math.sin(playTime * 2) * .15; L.og.material.opacity = .6 + Math.sin(playTime * 3) * .2; }
+  if (L.ring) L.ring.rotation.y += dt * .6;
+  if (!idle || !alive) return;
+  const P = player.pos, d = Math.hypot(P.x - L.x, P.z - L.z), same = L.zone ? player.under === L.zone : !player.under;
+  if (same && d < (L.zone ? 13 : L.B.water ? 34 : 24)) spawnBoss(L);
+}
+function spawnBoss(L) {
+  const B = L.B, parts = buildBossMesh(L.id), lvl = dayNum - 1 + L.lvl, sz = B.size;
+  parts.inner.scale.setScalar(sz);
+  const y = L.y + (B.fly ? 7 : B.water ? -1.2 : 0);
+  parts.g.position.set(L.x, y, L.z); scene.add(parts.g);
+  const hp = B.hp * Math.pow(1.5, lvl), bar = new THREE.Group(); bar.visible = false;
+  const m = Object.assign(parts, { type: 'boss', id: L.id, B, d: { name: B.name, coin: B.coin, hp: B.hp, dmg: B.dmg, fly: !!B.fly, boss: true }, sz, lvl, x: L.x, z: L.z, y, hp, max: hp, dmg: B.dmg * Math.pow(1.25, lvl), spd: B.spd,
+    r: .5 * sz * (B.water ? 1.5 : 1), fly: !!B.fly, cd: 2, kx: 0, kz: 0, burn: 0, burnDps: 0, burnTick: 0, poison: 0, poisonDps: 0, poisonTick: 0, stun: 0, slow: 0, root: 0, fear: 0, mark: 0, markLvl: 0, strafe: 1, flash: 0, phase: 0,
+    bar, fg: new THREE.Object3D(), dead: false, atk: 0, wanderA: 0, boss: true, lair: L, home: { x: L.x, z: L.z }, abT: 2.5, abI: 0, cast: null, aggro: true, enraged: false, cave: L.zone || null, summonT: 1e9 });
+  monsters.push(m); L.boss = m; shake = .6;
+  toast(`☠️ <b style="color:#ff6a4a">BOSS: ${B.name}</b> awakens!<br><span style="font-size:13px">Watch the glowing circles on the ground — step out of them!</span>`, 4500);
+  sfx(70, 1.2, 'sawtooth', .09, .5); setTimeout(() => sfx(55, 1, 'sawtooth', .08, .6), 300);
+  burst(mCenter(m), B.glow, 40, 8, 1, 0, 2); flash(mCenter(m), B.glow, 20, .8);
+}
+// ---- warning circles: an outline appears and fills up — when it's full, whatever is inside gets hit
+const warns = [], warnRing = new THREE.RingGeometry(.9, 1, 48).rotateX(-Math.PI / 2), warnFill = new THREE.CircleGeometry(1, 40).rotateX(-Math.PI / 2);
+function telegraph(x, z, y, r, t, col, fn) {
+  const g = new THREE.Group(), mk = op => new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: op, depthWrite: false, depthTest: false });
+  const ring = new THREE.Mesh(warnRing, mk(.9)), fill = new THREE.Mesh(warnFill, mk(.28)); ring.renderOrder = fill.renderOrder = 5;
+  g.add(ring, fill); g.position.set(x, y + .15, z); g.scale.setScalar(r); fill.scale.setScalar(.01); scene.add(g); warns.push({ g, ring, fill, t, max: t, fn, x, z, y, r });
+}
+const inWarn = w => alive && Math.hypot(player.pos.x - w.x, player.pos.z - w.z) < w.r + .3 && Math.abs(player.pos.y - w.y) < 3.5;
+// ---- hazards that hurt the PLAYER (quicksand, poison bloom, ink…)
+const phaz = [];
+function addPHazard(x, y, z, r, life, dps, elem, col, src) { const s = new THREE.Mesh(warnFill, new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: .5, depthWrite: false })); s.scale.setScalar(r); s.position.set(x, y + .12, z); s.renderOrder = 4; scene.add(s);
+  const gs = glowSprite(col, r * 2, .35); gs.position.set(x, y + .6, z); scene.add(gs); phaz.push({ x, y, z, r, life, max: life, dps, elem, s, gs, src, tick: 0 }); }
+// rising spikes / roots / tentacles from the ground
+const spikes = [];
+function spikeFx(x, y, z, col, h, r, tex = 'rock') { const g = new THREE.Group(); g.position.set(x, y, z); scene.add(g); const m = M(col, { tex, roughness: .4 });
+  for (let k = 0; k < 6; k++) { const a = k * 1.05 + R(0, .5), d = k ? R(.3, r * .7) : 0, hh = h * R(.6, 1.1); const c = part(gK(R(.25, .45) * (h / 3), hh, 7), m, g, Math.cos(a) * d, hh / 2 - .2, Math.sin(a) * d, false); c.rotation.set(R(-.25, .25), 0, R(-.25, .25)); }
+  g.scale.y = .01; spikes.push({ g, t: 0 }); }
+function strikeFx(w, fx, col) {
+  const p = new V3(w.x, w.y + .5, w.z);
+  if (fx === 'bolt') { lightning(p.clone().add(new V3(R(-2, 2), 26, R(-2, 2))), p); lightning(p.clone().add(new V3(R(-2, 2), 26, R(-2, 2))), p); flash(p, 0xfff7a0, 8, .35); sfx(80, .4, 'sawtooth', .07, .5); }
+  else if (fx === 'meteor') { for (let k = 0; k < 7; k++) burst(p.clone().add(new V3(4 - k * .6, 22 - k * 3.2, 0)), 0xff8a30, 2, 1, .3, 0, 1.4); flash(p, 0xff7a20, 9, .4); burst(p, 0x4a3a30, 14, 6, .8, 6, 1.5); sfx(90, .4, 'sawtooth', .08, .3); }
+  else if (fx === 'spike') { spikeFx(w.x, w.y, w.z, 0xcfefff, 3.2, w.r); sfx(1200, .15, 'square', .03, .4); }
+  else if (fx === 'roots') { spikeFx(w.x, w.y, w.z, 0x5a3a22, 2.6, w.r, 'bark'); sfx(120, .25, 'square', .04, .6); }
+  else if (fx === 'tentacle') { spikeFx(w.x, w.y, w.z, 0xa03a5a, 4.5, w.r * .5); sfx(150, .3, 'sine', .07, .5); }
+  else if (fx === 'boulder') { burst(p, 0x8a7a60, 26, 8, .9, 10, 1.8); flash(p, 0xc8b890, 7, .3); sfx(70, .4, 'sawtooth', .08, .3); }
+  burst(p, col, 14, 5, .5, 4);
+}
+function shockFx(w, col) { const p = new V3(w.x, w.y + .4, w.z); for (let k = 0; k < 24; k++) { const a = k / 24 * Math.PI * 2; burst(p.clone().add(new V3(Math.cos(a) * w.r * .9, 0, Math.sin(a) * w.r * .9)), col, 1, 3, .5, 3, 1.4); }
+  flash(p, col, w.r * 2.5, .35); burst(p, 0x8a7a60, 18, 7, .8, 8, 1.4); sfx(60, .5, 'sawtooth', .09, .4); shake = Math.max(shake, .45); }
+function knockPlayer(x, z, f, up) { const P = player.pos, dx = P.x - x, dz = P.z - z, d = Math.hypot(dx, dz) || 1; player.kbx = dx / d * f; player.kbz = dz / d * f; player.vy = Math.max(player.vy, up); player.onGround = false; }
+// what boss elements do to you
+function applyElem(e, src, dmg) { if (!e || !alive) return;
+  if (e === 'fire' || e === 'poison' || e === 'drain') { player.dotDps = Math.max(player.dotT > 0 ? player.dotDps || 0 : 0, dmg * .1); player.dotT = 3; player.dotCol = e === 'fire' ? 0xff6a1a : e === 'poison' ? 0x7be05a : 0xb06aff;
+    if (e === 'drain' && src && !src.dead) { src.hp = Math.min(src.max, src.hp + dmg * .6); burst(mCenter(src), 0xb06aff, 6, 2, .5, -2); } }
+  if (e === 'ice' || e === 'slow' || e === 'shock') player.slowT = Math.max(player.slowT || 0, e === 'shock' ? 1 : 2.5);
+  if (e === 'root') player.rootT = Math.max(player.rootT || 0, 1.1);
+}
+function dmgTaken() { const T = curT(); let f = 1; if (T.shield) f *= Math.pow(.7, T.shield); if (T.colossus) f *= Math.pow(.7, T.colossus); const def = armorDefTotal(); return def ? f * 50 / (50 + def) : f; }
+function bossShot(m, from, dir, spd, dmg, col, elem, size = 1) { const pm_ = projMesh('orb', col); pm_.scale.setScalar(size); pm_.position.copy(from);
+  eprojs.push({ m: pm_, pos: from.clone(), v: dir.clone().multiplyScalar(spd), dmg, life: 3.5, src: m, arrow: false, elem, big: size }); }
+const bossMouth = m => { const P = player.pos, dx = P.x - m.x, dz = P.z - m.z, d = Math.hypot(dx, dz) || 1; return new V3(m.x + dx / d * m.r, m.y + (m.fly ? 0 : m.B.water ? 2.5 : 1.45 * m.sz), m.z + dz / d * m.r); };
+function bossCallout(m, name) { if (name) { dmgText(mCenter(m).add(new V3(0, 1.1 * m.sz, 0)), name, '#ffb0a0', 22); bossCallout.last = name; bossCallout.t = 2; } }
+function startCast(m, kind, o) {
+  const P = player.pos, B = m.B, col = o.col || B.glow, gy = (x, z) => groundAt(x, z, m.cave ? m.cave.floor + 1 : P.y + 2);
+  if (kind === 'heal' && m.hp > m.max * .7) return false;
+  if (kind === 'summon' && monsters.filter(q => !q.dead).length > 20) return false;
+  if (kind === 'teleport' && B.water) return false;
+  bossCallout(m, o.name); m.atk = .6;
+  if (kind === 'slam') { telegraph(m.x, m.z, gy(m.x, m.z), o.r, 1.1, col, w => { if (m.dead) return; shockFx(w, col); if (inWarn(w)) { hurtPlayer(m.dmg * o.mult, m); applyElem(o.elem, m, m.dmg); knockPlayer(m.x, m.z, 14, 7); } }); m.cast = { kind, t: 1.2 }; }
+  else if (kind === 'rain') { for (let k = 0; k < o.n; k++) { const a = rand() * 6.28, d = k ? R(2.5, 9) : 0, x = P.x + Math.cos(a) * d, z = P.z + Math.sin(a) * d;
+      telegraph(x, z, gy(x, z), o.r, 1 + k * .12, col, w => { strikeFx(w, o.fx, col); if (inWarn(w)) { hurtPlayer(m.dmg * .9, m); applyElem(o.elem, m, m.dmg); } }); } m.cast = { kind, t: .7 }; }
+  else if (kind === 'nova') m.cast = { kind, t: .9, end: () => { if (m.dead) return; const c = new V3(m.x, (m.fly ? m.y : m.B.water ? WATER : m.y) + 1.1, m.z);
+      for (let k = 0; k < o.n; k++) { const a = k / o.n * Math.PI * 2; bossShot(m, c, new V3(Math.cos(a), 0, Math.sin(a)), 13, m.dmg * .6, col, o.elem, 1.4); } flash(c, col, 12, .4); sfx(200, .4, 'sawtooth', .06, .5); } };
+  else if (kind === 'volley') m.cast = { kind, t: .6, end: () => { if (m.dead) return; const c = bossMouth(m), base = eyePos().add(new V3(0, -.6, 0)).sub(c).normalize();
+      for (let k = 0; k < o.n; k++) { const a = (k - (o.n - 1) / 2) * (o.spread / Math.max(1, o.n - 1)); bossShot(m, c, base.clone().applyAxisAngle(UP, a), 21, m.dmg * .55, col, o.elem, 1.1); } sfx(500, .2, 'sine', .05, 1.4); } };
+  else if (kind === 'breath') m.cast = { kind, t: 1.8, tick: .3, col, elem: o.elem };
+  else if (kind === 'charge') { telegraph(P.x, P.z, gy(P.x, P.z), 2.6, .75, col, () => { }); m.cast = { kind, t: 1.9, tx: P.x, tz: P.z, mult: o.mult }; sfx(90, .6, 'sawtooth', .07, 1.6); }
+  else if (kind === 'leap') { const tx = P.x, tz = P.z, ty = gy(tx, tz); m.cast = { kind, t: 1.3, sx: m.x, sz: m.z, sy: m.y, tx, tz, ty };
+    telegraph(tx, tz, ty, o.r, 1.3, col, w => { if (m.dead) return; shockFx(w, col); if (inWarn(w)) { hurtPlayer(m.dmg * o.mult, m); knockPlayer(tx, tz, 14, 8); } }); }
+  else if (kind === 'summon') { for (let k = 0; k < o.n; k++) { const a = rand() * 6.28; spawnMonster({ type: o.type, x: m.x + Math.cos(a) * (m.r + 3), z: m.z + Math.sin(a) * (m.r + 3), minion: true, zone: m.cave }); }
+    flash(mCenter(m), col, 12, .5); sfx(160, .5, 'sawtooth', .06, 1.5); m.cast = { kind, t: .8 }; }
+  else if (kind === 'teleport') { burst(mCenter(m), col, 30, 6, .7, 0, 1.3); const a = rand() * 6.28; let nx = P.x + Math.cos(a) * 6, nz = P.z + Math.sin(a) * 6;
+    if (m.cave) { const Z = m.cave, ox = nx - Z.x, oz = nz - Z.z, od = Math.hypot(ox, oz); if (od > Z.r - 3) { nx = Z.x + ox / od * (Z.r - 3); nz = Z.z + oz / od * (Z.r - 3); } }
+    m.x = nx; m.z = nz; m.y = gy(nx, nz) + (m.fly ? 7 : 0); burst(mCenter(m), col, 30, 6, .7, 0, 1.3); sfx(900, .3, 'sine', .06, .4);
+    telegraph(m.x, m.z, gy(m.x, m.z), 4.5, .9, col, w => { if (m.dead) return; shockFx(w, col); if (inWarn(w)) { hurtPlayer(m.dmg * 1.2, m); applyElem(o.elem, m, m.dmg); } }); m.cast = { kind, t: 1 }; }
+  else if (kind === 'pull') { m.cast = { kind, t: 1.8, push: o.push, r: o.r, col }; sfx(o.push ? 300 : 60, 1.2, 'sine', .07, o.push ? 2 : .5); }
+  else if (kind === 'pools') { for (let k = 0; k < o.n; k++) { const a = rand() * 6.28, d = k ? R(3, 9) : 0, x = P.x + Math.cos(a) * d, z = P.z + Math.sin(a) * d;
+      telegraph(x, z, gy(x, z), o.r, .8, col, w => { if (!m.dead) addPHazard(w.x, w.y, w.z, w.r, 6, m.dmg * .35, o.elem, col, m); }); } m.cast = { kind, t: .6 }; }
+  else if (kind === 'heal') m.cast = { kind, t: 1.4, end: () => { if (m.dead) return; const h = m.max * o.pct; m.hp = Math.min(m.max, m.hp + h); dmgText(mCenter(m).add(new V3(0, m.sz, 0)), '+' + Math.round(h), '#6bff8a', 26); burst(mCenter(m), 0x6bff8a, 30, 5, 1, -3, 1.5); } };
+}
+function castTick(m, c, dt, dist) {
+  const P = player.pos;
+  if (c.kind === 'breath') { c.tick -= dt; if (c.tick <= 0) { c.tick = .08; const from = bossMouth(m), dir = eyePos().add(new V3(0, -.5, 0)).sub(from).normalize().applyAxisAngle(UP, R(-.12, .12)); dir.y += R(-.04, .04);
+      bossShot(m, from, dir.normalize(), 19, m.dmg * .22, c.col, c.elem, .8); } }
+  else if (c.kind === 'charge') { if (c.e < .75) return [0, 0, 0];
+    const cx = c.tx - m.x, cz = c.tz - m.z, cd = Math.hypot(cx, cz); if (cd < 1) { c.t = 0; return [0, 0, 0]; }
+    if (!c.hit && dist < m.r + 1.4 && Math.abs(P.y - m.y) < 3 + (m.fly ? 1.5 : 0)) { c.hit = true; hurtPlayer(m.dmg * c.mult, m); knockPlayer(m.x, m.z, 16, 7); shake = .4; }
+    if (rand() < .5) burst(new V3(m.x, m.y + .5, m.z), 0xd0c8b0, 3, 3, .4, 2);
+    return [cx / cd, cz / cd, 22]; }
+  else if (c.kind === 'leap') { const k = clamp(c.e / 1.3, 0, 1); m.x = lerp(c.sx, c.tx, k); m.z = lerp(c.sz, c.tz, k); m.leapY = lerp(c.sy, c.ty, k) + Math.sin(k * Math.PI) * 12; }
+  else if (c.kind === 'pull') { const px = m.x - P.x, pz = m.z - P.z, pd = Math.hypot(px, pz);
+    if (alive && pd < c.r && pd > m.r + 1) { const f = (c.push ? -15 : 8.5) * dt / pd; P.x += px * f; P.z += pz * f; resolveCollisions(P, .45); }
+    if (rand() < .7) { const a = rand() * 6.28, rr = R(3, c.r * .6); burst(new V3(m.x + Math.cos(a) * rr, m.y + 1, m.z + Math.sin(a) * rr), c.col, 1, c.push ? 6 : -6, .5, 0); }
+    if (c.push && !c.hit && pd < 9) { c.hit = true; hurtPlayer(m.dmg * .6, m); applyElem('shock', m, m.dmg); } }
+  return [0, 0, 0];
+}
+// returns [moveX, moveZ, speed], or null if the boss gave up and vanished
+function bossThink(m, dt, dx, dz, dist) {
+  const B = m.B, P = player.pos, dHome = Math.hypot(P.x - m.home.x, P.z - m.home.z), same = m.cave ? player.under === m.cave : !player.under;
+  m.stun = m.root = m.fear = 0; m.kx *= .25; m.kz *= .25; m.bar.visible = false; // bosses can't be stunned, rooted, scared or shoved around
+  if (!alive || !same || dHome > 80) { if (m.aggro) { m.aggro = false; m.cast = null; } }
+  else if (!m.aggro && dHome < 45) m.aggro = true;
+  if (!m.aggro) { // walk home and heal; give up completely if you're long gone
+    if (!alive || dHome > 140) { m.dead = true; scene.remove(m.g); return null; }
+    m.hp = Math.min(m.max, m.hp + m.max * .08 * dt);
+    const hx = m.home.x - m.x, hz = m.home.z - m.z, hd = Math.hypot(hx, hz); return hd > 2 ? [hx / hd, hz / hd, Math.max(2, m.spd)] : [0, 0, 0]; }
+  if (!m.enraged && m.hp < m.max * .4) { m.enraged = true; m.spd *= 1.25; toast(`☠️ <b style="color:#ff5050">${B.name} is ENRAGED!</b> Attacks come faster`, 2600); flash(mCenter(m), B.glow, 16, .6); sfx(70, .8, 'sawtooth', .08, .5); }
+  if (m.cast) { const c = m.cast; c.t -= dt; c.e = (c.e || 0) + dt; const r = castTick(m, c, dt, dist); if (c.t <= 0 && m.cast === c) { if (c.end) c.end(); m.cast = null; } return r; }
+  m.abT -= dt;
+  if (m.abT <= 0 && dist < 40) { const [kind, o] = B.abil[m.abI % 4]; m.abI += rand() < .3 ? 2 : 1;
+    m.abT = startCast(m, kind, o) === false ? .05 : (m.enraged ? 2.1 : 3.3) * R(.85, 1.15); return [0, 0, 0]; }
+  const reach = m.r + 1.7;
+  if (dist < reach && m.cd <= 0 && Math.abs(P.y - m.y) < 3.2) { m.cd = m.enraged ? 1.1 : 1.5; m.atk = .45; hurtPlayer(m.dmg, m); }
+  if (B.water) return [0, 0, 0];
+  return dist > reach * .8 ? [dx / dist, dz / dist, m.spd] : [0, 0, 0];
+}
+function bossY(m, gy, dt) {
+  const B = m.B, P = player.pos;
+  if (m.cast && m.cast.kind === 'leap') m.y = m.leapY;
+  else if (B.fly) { const dist = Math.hypot(P.x - m.x, P.z - m.z), diving = m.cast && m.cast.kind === 'charge' && m.cast.e > .75;
+    const ty = (diving || (dist < 9 && m.aggro && !m.cast)) ? Math.max(gy, WATER, P.y) + 1.4 : Math.max(gy, WATER) + 7 + Math.sin(m.phase) * .8; m.y = lerp(m.y, ty, 1 - Math.pow(.15, dt)); }
+  else if (B.water) m.y = WATER - 1.2 + Math.sin(m.phase * .8) * .3;
+}
+function bossAnim(m, dt) {
+  m.wings.forEach((w, k) => w.rotation.z = Math.sin(m.phase * 3.5) * .6 * (k ? -1 : 1));
+  m.tent.forEach((t, k) => { t.rotation.z = Math.sin(m.phase * 1.6 + k) * .35 - .15; t.rotation.x = Math.cos(m.phase * 1.3 + k * 1.7) * .25; });
+  if (m.cast && m.cast.kind !== 'charge') m.arms.forEach(a => a.rotation.x = -2.6 + Math.sin(m.phase * 8) * .15); // arms raised while casting
+  if (m.aggro) m.g.rotation.y = Math.atan2(player.pos.x - m.x, player.pos.z - m.z);
+  if (m.id === 'lich') m.inner.position.y = .4 + Math.sin(m.phase * 2) * .2;
+}
+function bossDefeated(m, c) {
+  const B = m.B, L = m.lair, T = curT(); L.defeated = true; L.boss = null;
+  const gold = Math.round(B.coin * Math.pow(1.5, m.lvl) * (1 + .3 * (T.coins || 0) + .25 * (T.crown || 0)));
+  const drop = B.water ? L.shore : { x: m.x, z: m.z }, dy = B.water ? getH(drop.x, drop.z) : m.y;
+  spawnCoins(gold, drop.x, dy, drop.z);
+  const it = makeItem({ [B.item]: 1 }, Math.round(BASE[B.item].p * (1 + .3 * m.lvl)), 5);
+  spawnLoot(it, drop.x, drop.z, true, 1.5);
+  if (rand() < .45) setTimeout(() => spawnLoot(baseItem('voidcore'), drop.x + 1.5, drop.z, true, 1), 300);
+  if (rand() < .5) setTimeout(() => spawnLoot(baseItem(pick(RARE_KEYS)), drop.x - 1.5, drop.z, true, 1), 500);
+  flash(c, B.glow, 22, .9); burst(c, B.glow, 60, 10, 1.2, 2, 2); burst(c, 0xffd84a, 40, 8, 1, 3, 1.5); shake = .8;
+  toast(`☠️ <b style="color:#ffd84a">${B.name} defeated!</b><br>+🪙 ${gold} · it dropped the <b style="color:#ff7a5a">${NOUN[B.item]}</b>`, 5500);
+  [392, 523, 659, 784, 1047].forEach((f, k) => setTimeout(() => sfx(f, .35, 'triangle', .07, 1), k * 120));
+}
+function clearBossFx() {
+  for (const w of warns) scene.remove(w.g); warns.length = 0;
+  for (const h of phaz) { scene.remove(h.s); scene.remove(h.gs); } phaz.length = 0;
+  for (const s of spikes) scene.remove(s.g); spikes.length = 0;
+}
+const bossEl = document.getElementById('bossbar'), bossName = bossEl.querySelector('.bn'), bossFill = bossEl.querySelector('.bf'), bossAb = bossEl.querySelector('.ba');
+const bossFight = () => monsters.some(m => m.boss && !m.dead && m.aggro && Math.hypot(m.x - player.pos.x, m.z - player.pos.z) < 70);
+function updateBossSystems(dt) {
+  const P = player.pos;
+  for (const L of lairs) updateLair(L, dt);
+  for (let i = warns.length - 1; i >= 0; i--) { const w = warns[i]; w.t -= dt; const k = 1 - w.t / w.max; w.fill.scale.setScalar(Math.max(.01, k)); w.ring.material.opacity = .55 + .4 * Math.sin(playTime * 18);
+    if (w.t <= 0) { scene.remove(w.g); w.ring.material.dispose(); w.fill.material.dispose(); warns.splice(i, 1); w.fn(w); } }
+  for (let i = phaz.length - 1; i >= 0; i--) { const h = phaz[i]; h.life -= dt; const f = Math.min(1, h.life / .8); h.s.material.opacity = .5 * f; h.gs.material.opacity = .35 * f;
+    if (h.life <= 0) { scene.remove(h.s); scene.remove(h.gs); h.s.material.dispose(); h.gs.material.dispose(); phaz.splice(i, 1); continue; }
+    if (alive && Math.hypot(P.x - h.x, P.z - h.z) < h.r && Math.abs(P.y - h.y) < 2.5) { h.tick -= dt; if (h.tick <= 0) { h.tick = .5; player.hp -= h.dps * .5 * dmgTaken(); player.hurtT = 0; applyElem(h.elem, h.src, h.dps);
+      const hu = document.getElementById('hurt'); hu.style.opacity = .5; setTimeout(() => hu.style.opacity = 0, 120); if (player.hp <= 0) die(); } } }
+  for (let i = spikes.length - 1; i >= 0; i--) { const s = spikes[i]; s.t += dt; s.g.scale.y = s.t < .15 ? s.t / .15 : s.t > .9 ? Math.max(.01, 1 - (s.t - .9) / .3) : 1; if (s.t > 1.2) { scene.remove(s.g); spikes.splice(i, 1); } }
+  // status effects from bosses
+  if (player.slowT > 0) player.slowT -= dt; if (player.rootT > 0) player.rootT -= dt;
+  if (player.dotT > 0 && alive) { player.dotT -= dt; player.hp -= player.dotDps * dt * dmgTaken(); player.hurtT = 0; if (rand() < .15) burst(P.clone().add(new V3(0, 1, 0)), player.dotCol || 0xff6a1a, 2, 2, .4, -2); if (player.hp <= 0) die(); }
+  if (bossCallout.t > 0) bossCallout.t -= dt;
+  // health bar of the closest boss you're fighting
+  let bm = null, bd = 70; for (const m of monsters) if (m.boss && !m.dead && m.aggro) { const d = Math.hypot(m.x - P.x, m.z - P.z); if (d < bd) { bd = d; bm = m; } }
+  if (bm) { bossEl.style.display = 'block'; const nm = `☠️ ${bm.B.name}${bm.lvl ? ' · Lv ' + (bm.lvl + 1) : ''}`; if (bossName.textContent !== nm) bossName.textContent = nm; bossFill.style.width = Math.max(0, bm.hp / bm.max * 100) + '%';
+    bossEl.classList.toggle('rage', bm.enraged); const at = bossCallout.t > 0 ? '⚠️ ' + bossCallout.last : `${Math.ceil(bm.hp).toLocaleString()} / ${Math.ceil(bm.max).toLocaleString()}`; if (bossAb.textContent !== at) bossAb.textContent = at; }
+  else if (bossEl.style.display !== 'none') bossEl.style.display = 'none';
 }
 function updateMonsters(dt) {
   const P = player.pos;
@@ -1779,7 +2423,7 @@ function updateMonsters(dt) {
     if (m.stun > 0) m.stun -= dt; if (m.root > 0) m.root -= dt; if (m.fear > 0) m.fear -= dt; if (m.mark > 0) m.mark -= dt;
     const dx = P.x - m.x, dz = P.z - m.z, dist = Math.hypot(dx, dz);
     let spd = (m.stun > 0 || m.root > 0) ? 0 : m.spd * (m.slow > 0 ? .4 : 1), mx = 0, mz = 0;
-    if (dist > (m.d.king ? 140 : 90)) { if (m.d.king) toast('👑 The King escaped…', 2500); scene.remove(m.g); monsters.splice(i, 1); continue; }
+    if (!m.boss && dist > (m.d.king ? 140 : 90)) { if (m.d.king) toast('👑 The King escaped…', 2500); scene.remove(m.g); monsters.splice(i, 1); continue; }
     if (alive && dist < 60) { mx = dx / dist; mz = dz / dist; }
     else { m.wanderA += R(-1, 1) * dt; mx = Math.cos(m.wanderA) * .4; mz = Math.sin(m.wanderA) * .4; }
     const reach = m.r + .9;
@@ -1797,6 +2441,11 @@ function updateMonsters(dt) {
         if (made) { flash(mCenter(m), 0xffd84a, 6, .4); burst(mCenter(m), 0xffd84a, 16, 5, .7, 1); sfx(200, .3, 'sawtooth', .05, 2); m.atk = .5; } }
     }
     if (m.fear > 0 && alive && dist > .01) { mx = -dx / dist * 1.2; mz = -dz / dist * 1.2; }
+    if (m.boss) { const r = bossThink(m, dt, dx, dz, dist); if (!r) { monsters.splice(i, 1); continue; } [mx, mz, spd] = r; }
+    // new monster tricks: wolves pounce, golems slam the ground
+    if (m.d.lunge && alive && m.stun <= 0 && m.root <= 0) { m.lungeCd = (m.lungeCd ?? 2) - dt; if (m.lungeCd <= 0 && dist < 8 && dist > 2.5) { m.lungeCd = R(2.5, 4); m.kx += dx / dist * 15; m.kz += dz / dist * 15; m.atk = .3; sfx(260, .15, 'sawtooth', .03, .6); } }
+    if (m.d.slam && alive && m.stun <= 0) { m.slamCd = (m.slamCd ?? 3) - dt; if (m.slamCd <= 0 && dist < 5) { m.slamCd = R(4, 6); m.atk = 1; m.cd = Math.max(m.cd, 1.2);
+      telegraph(m.x, m.z, m.y, 4.2, .9, 0xff8a40, w => { if (m.dead) return; shockFx(w, 0xc8a070); if (inWarn(w)) { hurtPlayer(m.dmg * 1.3, m); knockPlayer(w.x, w.z, 10, 6); } }); } }
     for (const o of monsters) { if (o === m || o.dead) continue; const ox = m.x - o.x, oz = m.z - o.z, od = Math.hypot(ox, oz), rr = m.r + o.r + .2;
       if (od < rr && od > .001) { mx += ox / od * 1.5; mz += oz / od * 1.5; } }
     m.x += (mx * spd + m.kx) * dt; m.z += (mz * spd + m.kz) * dt;
@@ -1807,18 +2456,20 @@ function updateMonsters(dt) {
     const gy = groundAt(m.x, m.z, m.y);
     if (m.fly) { const targetY = dist < 7 && alive ? P.y + 1.3 : Math.max(gy, WATER) + 4.5 + Math.sin(m.phase * 1.5) * .8; m.y = lerp(m.y, targetY, 1 - Math.pow(.15, dt)); }
     else { m.y = Math.max(gy, WATER - 1.2); }
+    if (m.boss) bossY(m, gy, dt);
     // attack
-    if (alive && m.cd <= 0 && m.stun <= 0 && m.fear <= 0 && !m.d.ranged && !m.d.king && dist < reach && Math.abs((m.fly ? m.y - 1 : m.y) - P.y) < 2.2) { m.cd = 1.3; m.atk = .3; hurtPlayer(m.dmg, m); }
-    if (alive && m.d.ranged && m.cd <= 0 && m.stun <= 0 && m.fear <= 0 && dist > 2 && dist < m.d.range * 1.6) { m.cd = m.d.rate * R(.85, 1.2); m.atk = .35; enemyShoot(m); }
+    if (alive && !m.boss && m.cd <= 0 && m.stun <= 0 && m.fear <= 0 && !m.d.ranged && !m.d.king && dist < reach && Math.abs((m.fly ? m.y - 1 : m.y) - P.y) < 2.2) { m.cd = 1.3; m.atk = .3; hurtPlayer(m.dmg, m); if (m.d.webs) { player.slowT = Math.max(player.slowT || 0, 2); burst(eyePos().addScaledVector(lookDir(), 1.5), 0xffffff, 8, 2, .5, 3); } }
+    if (alive && !m.boss && m.d.ranged && m.cd <= 0 && m.stun <= 0 && m.fear <= 0 && dist > 2 && dist < m.d.range * 1.6) { m.cd = m.d.rate * R(.85, 1.2); m.atk = .35; enemyShoot(m); }
     // anim
     m.g.position.set(m.x, m.y, m.z);
     if (mx || mz) m.g.rotation.y = Math.atan2(dist < 60 ? dx : mx, dist < 60 ? dz : mz);
     const sw = Math.sin(m.phase * spd * 2.2) * .6;
-    m.legs.forEach((l, k) => l.rotation.x = k ? sw : -sw);
+    m.legs.forEach((l, k) => l.rotation.x = ((k + (k >> 1)) % 2) ? sw : -sw);
     m.arms.forEach((a, k) => a.rotation.x = m.atk > 0 ? -2.2 : (k ? -sw : sw) * .7);
     m.wings.forEach((w, k) => w.rotation.z = Math.sin(m.phase * 14) * .8 * (k ? -1 : 1));
     if (!m.fly) m.inner.position.y = Math.abs(Math.sin(m.phase * spd * 2.2)) * .08;
-    const fs = m.flash > 0 ? 1.18 : 1; m.inner.scale.setScalar(m.sz * fs);
+    const fs = m.flash > 0 ? (m.boss ? 1.05 : 1.18) : 1; m.inner.scale.setScalar(m.sz * fs);
+    if (m.boss) bossAnim(m, dt);
     if (m.bar.visible) { m.bar.quaternion.copy(camera.quaternion); m.g.updateMatrixWorld(); m.bar.quaternion.premultiply(m.g.getWorldQuaternion(new THREE.Quaternion()).invert()); m.fg.scale.x = Math.max(0, m.hp / m.max); }
   }
 }
@@ -1829,6 +2480,7 @@ function projMesh(ammo, ec) {
   const g = new THREE.Group();
   if (ammo === 'arrow') { mesh(new THREE.CylinderGeometry(.03, .03, .9, 5), 0x8b5a2b, null, g, 0, 0, 0, false); mesh(new THREE.ConeGeometry(.07, .2, 6), 0xcccccc, { metalness: .6 }, g, 0, .52, 0, false); mesh(new THREE.BoxGeometry(.16, .18, .01), 0xffffff, null, g, 0, -.38, 0, false); }
   else if (ammo === 'stick') { mesh(new THREE.CylinderGeometry(.06, .07, 1.05, 6), 0x8b5a2b, null, g, 0, 0, 0, false); mesh(new THREE.CylinderGeometry(.03, .03, .3, 5), 0x8b5a2b, null, g, .08, .2, 0, false).rotation.z = -.6; }
+  else if (ammo === 'bone') { const bm = M(0xe0d8c0, { tex: 'rock', bumpScale: .01 }); part(gC(.05, .05, .6, 6), bm, g, 0, 0, 0, false); for (const s of [-1, 1]) for (const q of [-1, 1]) part(gS(.07, 8, 6), bm, g, q * .05, s * .3, 0, false); }
   else if (ammo === 'rock') mesh(new THREE.DodecahedronGeometry(.3, 0), 0x8a8580, null, g, 0, 0, 0, false);
   else if (ammo === 'bomb') { mesh(new THREE.SphereGeometry(.27, 10, 8), 0x222222, { metalness: .4 }, g, 0, 0, 0, false); const f = glowSprite(0xffaa30, .5); f.position.y = .3; g.add(f); }
   else if (ammo === 'star') { mesh(new THREE.OctahedronGeometry(.24), 0xfff070, { emissive: 0xffe040, emissiveIntensity: 1 }, g, 0, 0, 0, false); g.add(glowSprite(0xfff070, 1.5, .9)); }
@@ -1855,9 +2507,9 @@ function fireProjectiles(st, T, dir) {
 const eprojs = [];
 function enemyShoot(m) {
   const from = mCenter(m).add(new V3(0, .3 * m.sz, 0)), target = eyePos().add(new V3(0, -.6, 0));
-  const isArrow = m.d.ranged === 'arrow', spd = isArrow ? 22 : 13;
+  const isArrow = m.d.ranged === 'arrow' || m.d.ranged === 'bone', spd = m.d.ranged === 'bone' ? 17 : isArrow ? 22 : 13;
   const dir = target.sub(from).normalize();
-  const mesh_ = isArrow ? projMesh('arrow', 0xff5050) : projMesh('orb', 0xff4fd0);
+  const mesh_ = m.d.ranged === 'bone' ? projMesh('bone') : isArrow ? projMesh('arrow', 0xff5050) : projMesh('orb', 0xff4fd0);
   mesh_.position.copy(from);
   eprojs.push({ m: mesh_, pos: from, v: dir.multiplyScalar(spd), dmg: m.dmg, life: 4, src: m, arrow: isArrow });
   sfx(isArrow ? 360 : 520, .12, isArrow ? 'triangle' : 'sine', .035, isArrow ? .6 : 1.4);
@@ -1869,10 +2521,10 @@ function updateEProjs(dt) {
     const p = eprojs[i]; p.life -= dt;
     p.pos.addScaledVector(p.v, dt); p.m.position.copy(p.pos);
     if (p.arrow) p.m.quaternion.setFromUnitVectors(UP, tmpV.copy(p.v).normalize());
-    const hitPlayer = alive && Math.hypot(p.pos.x - c.x, p.pos.z - c.z) < .7 && Math.abs(p.pos.y - c.y) < 1.1;
+    const hr = .7 * (p.big || 1), hitPlayer = alive && Math.hypot(p.pos.x - c.x, p.pos.z - c.z) < hr && Math.abs(p.pos.y - c.y) < 1.1 + hr * .3;
     const q = p.pos.clone(); resolveCollisions(q, .1);
-    if (hitPlayer || p.life <= 0 || p.pos.y < getH(p.pos.x, p.pos.z) || q.x !== p.pos.x || q.z !== p.pos.z) {
-      if (hitPlayer) hurtPlayer(p.dmg, p.src); else burst(p.pos, p.arrow ? 0x9a7a5a : 0xff4fd0, 5, 2, .3, 4);
+    if (hitPlayer || p.life <= 0 || p.pos.y < groundAt(p.pos.x, p.pos.z, p.pos.y + .5) || q.x !== p.pos.x || q.z !== p.pos.z) {
+      if (hitPlayer) { hurtPlayer(p.dmg, p.src); applyElem(p.elem, p.src, p.dmg); } else burst(p.pos, p.arrow ? 0x9a7a5a : 0xff4fd0, 5, 2, .3, 4);
       scene.remove(p.m); eprojs.splice(i, 1);
     }
   }
@@ -1941,7 +2593,7 @@ function attack() {
     const ec = elemColor(T); const tip = eye.clone().add(new V3(0, -.3, 0)).addScaledVector(look, 1.6);
     if (ec) burst(tip, ec, 10, 4, .35, 0); else burst(tip, 0xffffff, 4, 3, .2, 0, .6);
     for (const m of monsters.slice()) { if (m.dead) continue; const dx = m.x - player.pos.x, dz = m.z - player.pos.z, d = Math.hypot(dx, dz);
-      if (d > st.reach + m.r || Math.abs(mCenter(m).y - player.pos.y - 1) > 2.2) continue;
+      if (d > st.reach + m.r || (m.fly ? Math.abs(m.y - player.pos.y - 1) > 2.4 : (player.pos.y + 1 < m.y - 1.5 || player.pos.y > m.y + 1.9 * m.sz))) continue;
       if ((dx * f.x + dz * f.z) / (d || 1) < st.arc && d > 1) continue;
       applyHit(m, st.dmg, st.punch ? {} : T, new V3(dx, 0, dz).normalize(), { melee: true }); }
     if (T.hammer && T.pickaxe) { const gp = player.pos.clone().addScaledVector(f, 2.4); if (!player.under) deformTerrain(gp.x, gp.z, 2.2, 1.4); flash(gp.clone().setY(gp.y + 1), 0xffe0a0, 5, .3);
@@ -2018,7 +2670,7 @@ function dash() {
 function jump() {
   if (!alive) return; const T = curT();
   if (player.onGround && T.spring && T.bomb) explode(player.pos.clone().add(new V3(0, .3, 0)), 3 + T.bomb, heldPower() * 1.3, {}); // ROCKET JUMP
-  if (player.onGround || player.swim) { player.vy = 10.5 * (1 + Math.min(1, .25 * (T.spring || 0))); player.onGround = false; player.jumps = T.feather || 0; sfx(400, .08, 'sine', .03, 1.6); }
+  if (player.onGround || player.swim) { player.vy = 10.5 * (1 + Math.min(1, .25 * (T.spring || 0))); player.onGround = false; player.jumps = (T.feather || 0) + 2 * (T.roc || 0); sfx(400, .08, 'sine', .03, 1.6); }
   else if (player.jumps > 0) { player.jumps--; player.vy = 9.5; burst(player.pos.clone(), 0xffffff, 8, 3, .4, 2); sfx(600, .08, 'sine', .03, 1.6); }
 }
 
@@ -2191,9 +2843,20 @@ function updateSky(dt) {
   const sh = sunDir.y, dayF = smooth(-.18, .22, sh), setF = Math.exp(-sh * sh * 25) * smooth(-.25, 0, sh);
   cSky.copy(cNight).lerp(cDay, dayF).lerp(cSet, setF * .55);
   cSky.multiplyScalar(.88 * clamp(settings.bright, .45, 1.15)); // sky follows the brightness setting too
-  scene.background.copy(cSky); scene.fog.color.copy(cSky);
-  if (player.under) { const fc = CAVE_T[player.under.type].fog; scene.background.setHex(fc); scene.fog.color.setHex(fc); scene.fog.near = 10; scene.fog.far = 70; } else { scene.fog.near = 90; scene.fog.far = 320; }
-  hemi.intensity = .34 + .36 * dayF; hemi.color.setHSL(.58, .5, .6 + .2 * dayF); ambient.intensity = .14 + .06 * (1 - dayF);
+  // gradient sky: deeper blue overhead, hazy pale horizon that the fog melts into
+  const hor = skyMat.uniforms.hor.value, top = skyMat.uniforms.top.value;
+  hor.copy(cSky).lerp(new THREE.Color(1, 1, 1), .28 * dayF).multiplyScalar(1.02);
+  top.copy(cSky).multiplyScalar(.62 + .1 * (1 - dayF)); top.b = Math.min(1, top.b * 1.15);
+  skyMat.uniforms.sunD.value.copy(sunDir); skyMat.uniforms.sunC.value.setRGB(1, lerp(.85, .55, setF), lerp(.6, .35, setF)).multiplyScalar(smooth(-.2, .1, sh) * .9);
+  skyDome.position.copy(camera.position);
+  scene.background.copy(hor); scene.fog.color.copy(hor);
+  if (player.under) { const fc = CAVE_T[player.under.type].fog; scene.background.setHex(fc); scene.fog.color.setHex(fc); scene.fog.near = 10; scene.fog.far = 70; skyDome.visible = false; } else { scene.fog.near = 70; scene.fog.far = 330; skyDome.visible = true; }
+  // refresh the reflections every few seconds as the sky changes (and right away when you go underground)
+  updateSky.envT = (updateSky.envT || 0) - Math.max(dt, .016); const envKey = player.under ? 'u' : 's';
+  if (updateSky.envT <= 0 || updateSky.envKey !== envKey) { updateSky.envT = 4; updateSky.envKey = envKey;
+    if (player.under) { const fc = new THREE.Color(CAVE_T[player.under.type].fog).multiplyScalar(2.5); skyMat.uniforms.hor.value.copy(fc); skyMat.uniforms.top.value.copy(fc).multiplyScalar(.5); }
+    envGround.material.color.setRGB(.2 * (.3 + dayF), .26 * (.3 + dayF), .16 * (.3 + dayF)); updateEnv(); }
+  hemi.intensity = .2 + .26 * dayF; hemi.color.setHSL(.58, .5, .6 + .2 * dayF); ambient.intensity = .08 + .06 * (1 - dayF);
   const P = player.pos;
   if (sh > -.05) { skyLight.position.copy(P).addScaledVector(sunDir, 200); skyLight.intensity = .95 * smooth(-.05, .2, sh); skyLight.color.setRGB(1, lerp(1, .7, setF), lerp(.95, .5, setF)); }
   else { skyLight.position.copy(P).addScaledVector(moonDir, 200); skyLight.intensity = .38 * smooth(-.05, -.3, sh); skyLight.color.setHex(0xa8bcff); }
@@ -2210,14 +2873,15 @@ function updateSky(dt) {
     updateSky.wasNight = isNight; }
 }
 function sunrise() {
-  for (const m of monsters) if (!m.dead && !m.cave) { m.dead = true; scene.remove(m.g); burst(mCenter(m), 0xfff0a0, 12, 4, .7, -2); }
+  for (const m of monsters) if (!m.dead && !m.cave && !m.boss) { m.dead = true; scene.remove(m.g); burst(mCenter(m), 0xfff0a0, 12, 4, .7, -2); }
   clearEProjs();
   toast('☀️ Sunrise! The monsters fade away… loot & merge before night!', 3500);
 }
 function onNewDay() {
   for (let k = 0; k < 4; k++) { const s = landSpot(WATER + 1.5, 30, .4, 3, 0); if (s) makeChest(s.x, s.z, s.h, rand() * 6); }
   player.baseMax += 20; player.hp = player.baseMax + 30 * (curT().heart || 0); player.phoenixUsed = false;
-  toast(`📦 Day ${dayNum}: +20 max HP and new chests appeared!`, 3500);
+  let back = 0; for (const L of lairs) if (L.defeated) { L.defeated = false; L.lvl++; back++; }
+  toast(`📦 Day ${dayNum}: +20 max HP and new chests appeared!${back ? `<br>☠️ ${back} defeated boss${back > 1 ? 'es have' : ' has'} returned — stronger.` : ''}`, 4000);
 }
 
 // ============================================================ minimap
@@ -2243,7 +2907,8 @@ function drawMinimap() {
   for (const b of biomes) if (b.lavaY !== undefined) dot(b.x, b.z, '#ff5a10', 10);
   for (const ch of chests) if (!ch.open && (!ch.cave || player.under === ch.cave)) dot(ch.x, ch.z, ch.theme ? '#ff9a40' : '#ffd040', 5);
   for (const l of loot) dot(l.x, l.z, '#ffffff', 3);
-  for (const m of monsters) dot(m.x, m.z, m.d.king ? '#ffd84a' : '#ff4050', m.d.king ? 8 : 4);
+  for (const L of lairs) if (!L.defeated && (!L.zone || player.under === L.zone)) { mctx.fillStyle = '#' + new THREE.Color(L.B.glow).getHexString(); mctx.beginPath(); mctx.arc(L.x - P.x, L.z - P.z, 5, 0, 7); mctx.fill(); mctx.lineWidth = 1.5; mctx.strokeStyle = '#200'; mctx.stroke(); }
+  for (const m of monsters) dot(m.x, m.z, m.boss ? '#ff2020' : m.d.king ? '#ffd84a' : '#ff4050', m.boss ? 10 : m.d.king ? 8 : 4);
   for (const c of coinDrops) dot(c.m.position.x, c.m.position.z, '#ffe066', 2);
   mctx.restore();
   const fx = Math.sin(player.yaw), fz = Math.cos(player.yaw), sx = fx * Math.cos(camYaw) - fz * Math.sin(camYaw), sy = fx * Math.sin(camYaw) + fz * Math.cos(camYaw), ang = Math.atan2(sy, sx);
@@ -2259,8 +2924,9 @@ function update(dt) {
   playTime += dt;
   updateSky(dt);
   const T = curT();
-  player.max = player.baseMax + 30 * (T.heart || 0); if (player.hp > player.max) player.hp = player.max;
+  player.max = player.baseMax + 30 * (T.heart || 0) + 60 * (T.heartwood || 0); if (player.hp > player.max) player.hp = player.max;
   if (T.meat && alive) player.hp = Math.min(player.max, player.hp + 2 * T.meat * dt);
+  if (T.heartwood && alive) player.hp = Math.min(player.max, player.hp + 3 * T.heartwood * dt);
   // input
   let ix = 0, iy = 0;
   if (keys.KeyW || keys.ArrowUp) iy += 1; if (keys.KeyS || keys.ArrowDown) iy -= 1;
@@ -2273,9 +2939,10 @@ function update(dt) {
   // NOTE: right vector = (cos yaw, -sin yaw) -> (-fwdZ, fwdX)
   player.cd -= dt; player.invuln -= dt; player.dashCd -= dt; player.hurtT += dt; player.tsCd = (player.tsCd || 0) - dt;
   if (alive) {
-    const gliding = T.glider && jumpHeld && !player.onGround && player.vy < 0;
+    const gliding = (T.glider || T.roc) && jumpHeld && !player.onGround && player.vy < 0;
     const speed = 7 * (1 + Math.min(1.4, .35 * (T.boots || 0))) * (1 + Math.min(1, .25 * (T.skate || 0)))
-      * (player.swim ? (T.fin ? .6 * (1.6 + .5 * T.fin) : .6) : 1) * (gliding ? 1.6 : 1);
+      * (player.swim ? ((T.fin || T.tentacle) ? .6 * (1.6 + .5 * ((T.fin || 0) + 2 * (T.tentacle || 0))) : .6) : 1) * (gliding ? 1.6 : 1)
+      * (player.slowT > 0 ? .5 : 1) * (player.rootT > 0 ? 0 : 1);
     const P = player.pos;
     if (player.dashT > 0) { player.dashT -= dt; const f = Math.hypot(mvx, mvz) > .1 ? [mvx / Math.hypot(mvx, mvz), mvz / Math.hypot(mvx, mvz)] : [Math.sin(player.yaw), Math.cos(player.yaw)];
       P.x += f[0] * 30 * dt; P.z += f[1] * 30 * dt; if (rand() < .7) burst(P.clone().add(new V3(0, .3, 0)), 0xffa040, 2, 1, .3, 0);
@@ -2283,6 +2950,7 @@ function update(dt) {
         for (const m of monsters) if (!m.dead && !player.dashHit.has(m) && Math.hypot(m.x - P.x, m.z - P.z) < 2.8 + m.r) { player.dashHit.add(m); lightning(P.clone().add(new V3(0, 1, 0)), mCenter(m)); applyHit(m, heldPower() * 1.5 * (1 + .3 * T.spark), { spark: T.spark }, null, {}); } }
       if (T.fire && T.rocket) { player.trailT = (player.trailT || 0) - dt; if (player.trailT <= 0) { player.trailT = .04; addHazard(P.x, P.y, P.z, 1.6, 3, heldPower() * .5 * T.fire, { fire: T.fire }, 0xff6a1a); } } }
     P.x += mvx * speed * dt; P.z += mvz * speed * dt;
+    if (player.kbx || player.kbz) { P.x += player.kbx * dt; P.z += player.kbz * dt; const kd = Math.pow(.03, dt); player.kbx *= kd; player.kbz *= kd; if (Math.abs(player.kbx) + Math.abs(player.kbz) < .2) player.kbx = player.kbz = 0; }
     const ml = Math.hypot(mvx, mvz);
     player.yaw = Math.atan2(fwdX, fwdZ);
     resolveCollisions(P, .45);
@@ -2299,9 +2967,9 @@ function update(dt) {
     if (T.skate && T.fin && g < WATER) { g = WATER; if (ml > .1 && rand() < .25) burst(P.clone().add(new V3(0, .1, 0)), 0xbfe8ff, 2, 2, .4, 4, .8); } // WATER WALKER
     player.swim = false;
     if (P.y <= g) { if (player.vy < -13 && T.bomb && T.feather) { explode(P.clone().add(new V3(0, .5, 0)), 4 + T.bomb, heldPower() * 2.2, { fire: T.fire || 0, bomb: 0 }); camPitch += .06; } // METEOR STOMP
-      P.y = g; if (player.vy < 0) player.vy = 0; player.onGround = true; player.jumps = T.feather || 0; }
+      P.y = g; if (player.vy < 0) player.vy = 0; player.onGround = true; player.jumps = (T.feather || 0) + 2 * (T.roc || 0); }
     else if (P.y > g + .15) player.onGround = false;
-    if (g < WATER - 1 && P.y < WATER - 1.1) { P.y = WATER - 1.1; player.vy = Math.max(player.vy, 0); player.swim = true; player.jumps = T.feather || 0; }
+    if (g < WATER - 1 && P.y < WATER - 1.1) { P.y = WATER - 1.1; player.vy = Math.max(player.vy, 0); player.swim = true; player.jumps = (T.feather || 0) + 2 * (T.roc || 0); }
     if (attackHeld) attack();
     // ---- underground caves: drop in through the glowing hole, climb out at the light shaft
     player.portalCd = (player.portalCd || 0) - dt;
@@ -2310,7 +2978,7 @@ function update(dt) {
     if (player.portalCd <= 0) for (const Z of caveZones) {
       if (!player.under && Math.hypot(P.x - Z.ent.x, P.z - Z.ent.z) < 1.7 && Math.abs(P.y - Z.ent.y) < 2.5) { // descend
         P.set(Z.x + 3, Z.floor + .1, Z.z); player.vy = 0; player.portalCd = 1.2; player.under = Z;
-        for (const m of monsters) if (!m.cave && !m.dead) { m.dead = true; scene.remove(m.g); } // surface monsters lose you
+        for (const m of monsters) if (!m.cave && !m.dead && !m.boss) { m.dead = true; scene.remove(m.g); } // surface monsters lose you
         if (!Z.found) { Z.found = true; toast(`⛏️ <b style="color:${CAVE_T[Z.type].col}">You found the ${CAVE_T[Z.type].name}!</b><br>Monsters lurk here day and night, but the chests are rich. Stand in the light to climb out.`, 4500); }
         sfx(200, .5, 'sine', .06, .4); flash(P.clone().add(new V3(0, 1, 0)), 0x8040ff, 6, .5); break; }
       if (player.under === Z && Math.hypot(P.x - Z.exit.x, P.z - Z.exit.z) < 1.4 && P.y < Z.floor + 2) { // climb out
@@ -2319,7 +2987,7 @@ function update(dt) {
     if (player.under) { const Z = player.under, dx = P.x - Z.x, dz = P.z - Z.z, d = Math.hypot(dx, dz); if (d > Z.r - .5) { P.x = Z.x + dx / d * (Z.r - .5); P.z = Z.z + dz / d * (Z.r - .5); } }
     for (const Z of caveZones) Z.group.visible = player.under === Z || (Z.breached && Math.hypot(P.x - Z.x, P.z - Z.z) < Z.r + 45);
     // volcano lava burns
-    for (const L of lavaPools) if (Math.hypot(P.x - L.x, P.z - L.z) < L.r && P.y < L.y + .4 && P.y > L.y - 3) {
+    for (const L of lavaPools) if (!T.ember && Math.hypot(P.x - L.x, P.z - L.z) < L.r && P.y < L.y + .4 && P.y > L.y - 3) {
       player.hp -= 30 * dt; player.hurtT = 0; if (rand() < .3) burst(P.clone(), 0xff6a1a, 3, 3, .4, -3); document.getElementById('hurt').style.opacity = .6; setTimeout(() => document.getElementById('hurt').style.opacity = 0, 100);
       if (player.hp <= 0) die(); }
     // combo + item auras
@@ -2365,10 +3033,10 @@ function update(dt) {
       Zn.spawnT -= dt; const n = monsters.filter(m => m.cave === Zn && !m.dead).length;
       if (Zn.spawnT <= 0) { Zn.spawnT = R(3, 6); if (n < 4 + Math.min(5, dayNum)) spawnMonster({ zone: Zn, lvlBonus: 1 }); } }
   }
-  updateMonsters(dt); updateProjs(dt); updateEProjs(dt); updateLoot(dt, T); updateCoins(dt, T); updateHazards(dt); updateFx(dt); updateDmgNums(dt);
+  updateMonsters(dt); updateProjs(dt); updateEProjs(dt); updateLoot(dt, T); updateCoins(dt, T); updateHazards(dt); updateBossSystems(dt); updateFx(dt); updateDmgNums(dt);
   for (const c of world.clouds) { c.position.x += dt * 2.5; if (c.position.x > HALF + 60) c.position.x = -HALF - 60; }
   for (const c of chests) if (!c.open) c.beam.material.opacity = .25 + Math.sin(playTime * 3 + c.x) * .1;
-  world.water.position.y = WATER + Math.sin(playTime * .8) * .08;
+  world.water.position.y = WATER + Math.sin(playTime * .8) * .08; world.water.material.normalMap.offset.set(playTime * .004, playTime * .0027);
   // HUD
   hpFill.style.width = (player.hp / player.max * 100) + '%';
   const ht = `❤️ ${Math.ceil(player.hp)} / ${player.max}`; if (hpText.textContent !== ht) hpText.textContent = ht;
@@ -2392,6 +3060,7 @@ function updateCamera(dt) {
   const P = player.pos, moving = (keys.KeyW || keys.KeyS || keys.KeyA || keys.KeyD || keys.ArrowUp || keys.ArrowDown || keys.ArrowLeft || keys.ArrowRight || joyVec.x || joyVec.y) && player.onGround ? 1 : 0;
   const bob = moving * Math.sin(player.walk) * .05;
   camera.position.set(P.x, P.y + 1.6 + bob, P.z);
+  if (shake > 0) { shake = Math.max(0, shake - dt); camera.position.x += R(-1, 1) * shake * .35; camera.position.y += R(-1, 1) * shake * .35; camera.position.z += R(-1, 1) * shake * .35; }
   camera.rotation.set(camPitch, camYaw, 0, 'YXZ');
   // viewmodel lighting follows the time of day
   vmHemi.intensity = hemi.intensity * .9; vmDir.intensity = .2 + skyLight.intensity * .5; vmDir.color.copy(skyLight.color);
@@ -2413,7 +3082,7 @@ function loop(now) {
   updateLockHint();
 }
 function generate() {
-  buildTerrain(); caveZones.forEach(buildCaveZone); biomes.forEach(buildBiome);
+  buildTerrain(); caveZones.forEach(buildCaveZone); biomes.forEach(buildBiome); placeLairs();
   for (let k = 0; k < 9; k++) { const s = landSpot(WATER + 2, 24, .22, 9, 30); if (s) buildHouse(s.x, s.z); }
   for (let k = 0; k < 6; k++) { const s = landSpot(WATER + 2, 34, .3, 11, 40); if (s) buildCave(s.x, s.z); }
   craters.slice(0, 5).forEach(c => { const h = getH(c.x, c.z); if (h > WATER + .5) makeChest(c.x, c.z, h, rand() * 6); });
