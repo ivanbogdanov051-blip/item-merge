@@ -88,7 +88,10 @@
   #skinCtl { display: grid; grid-template-columns: auto auto; gap: 7px 12px; align-items: center; text-align: left; font-size: 14px; }
   #skinCtl input[type=color] { width: 54px; height: 30px; border: 2px solid rgba(255,255,255,.35); border-radius: 8px; padding: 0; background: none; cursor: pointer; }
   #skinCtl select { font: 600 14px "Segoe UI", system-ui, sans-serif; padding: 5px 8px; border-radius: 8px; background: #1e2840; color: #fff; border: 2px solid rgba(255,255,255,.3); }
-  #skinCtl .tones { grid-column: 1 / 3; display: flex; gap: 5px; justify-content: flex-start; }
+  #skinCtl .tones { grid-column: 1 / 3; display: flex; gap: 5px; justify-content: flex-start; flex-wrap: wrap; }
+  #skinCtl .sh { grid-column: 1 / 3; font-weight: 800; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; opacity: .7; margin-top: 6px; border-bottom: 1px solid rgba(255,255,255,.2); padding-bottom: 2px; }
+  #skinCtl .zoom { grid-column: 1 / 3; font-size: 14px; padding: 6px 12px; }
+  #skinCtl { max-height: 62vh; overflow-y: auto; padding-right: 4px; }
   #skinCtl .tones button { width: 26px; height: 26px; border-radius: 50%; border: 2px solid rgba(255,255,255,.5); padding: 0; cursor: pointer; box-shadow: none; }
   @media (max-width: 600px) { #skinPrev { width: 170px; height: 212px; } #skinCtl { font-size: 12px; gap: 5px 8px; } }
   .screen button.sec { background: rgba(255,255,255,.16); font-size: 16px; padding: 10px 22px; box-shadow: none; }
@@ -1783,52 +1786,124 @@ function openChest(c, by = null) {
 // ============================================================ player
 const player = { pos: new V3(0, 0, 0), vy: 0, yaw: 0, hp: 100, max: 100, baseMax: 100, onGround: false, jumps: 0, cd: 0, swingT: 0, aimT: 0, dashT: 0, dashCd: 0, invuln: 0, hurtT: 99, walk: 0, kills: 0 };
 let alive = true;
-// ---- player skins: colours + hair style + hat + back piece (saved on this device, shown to friends in multiplayer)
-const SKIN_DEF = { s: 0xffd2a8, sh: 0x3b7dd8, pa: 0x5a3e2b, ha: 0x7b4a22, ey: 0x222222, ac: 0xd94848, hs: 0, hat: 0, back: 0, bt: 0x3a2414 };
-const SKIN_KEYS = ['s', 'sh', 'pa', 'ha', 'ey', 'ac', 'hs', 'hat', 'back', 'bt'];
-const HAIR_STYLES = ['Short', 'Long', 'Spiky', 'Ponytail', 'Bald', 'Mohawk'], HATS = ['None', 'Cap', 'Crown', 'Wizard hat', 'Horns', 'Headband', 'Top hat', 'Viking helmet'], BACKS = ['Scarf', 'Cape', 'Backpack', 'Wings', 'Nothing'];
+// ---- player skins: body colours, face (eyes, brows, mouth, beard, glasses, cheeks), hair, hat, back piece
+// (saved on this device, shown to friends in multiplayer)
+const SKIN_DEF = { s: 0xf2c6a0, sh: 0x3b7dd8, pa: 0x4a5a78, ha: 0x6b4423, ey: 0x5a3a20, ac: 0xd94848, hs: 0, hat: 0, back: 0, bt: 0x3a2414, es: 0, br: 1, mo: 0, bd: 0, gl: 0, ck: 1 };
+const SKIN_KEYS = ['s', 'sh', 'pa', 'ha', 'ey', 'ac', 'hs', 'hat', 'back', 'bt', 'es', 'br', 'mo', 'bd', 'gl', 'ck'];
+const HAIR_STYLES = ['Short', 'Long', 'Spiky', 'Ponytail', 'Bald', 'Mohawk', 'Curly', 'Bun'], HATS = ['None', 'Cap', 'Crown', 'Wizard hat', 'Horns', 'Headband', 'Top hat', 'Viking helmet'], BACKS = ['Scarf', 'Cape', 'Backpack', 'Wings', 'Nothing'];
+const EYE_STYLES = ['Normal', 'Big', 'Sleepy', 'Happy', 'Narrow'], BROWS = ['None', 'Normal', 'Thick', 'Raised', 'Serious'], MOUTHS = ['Smile', 'Neutral', 'Grin', 'Open', 'Smirk'];
+const BEARDS = ['None', 'Moustache', 'Beard', 'Goatee', 'Stubble'], GLASSES = ['None', 'Round glasses', 'Square glasses', 'Sunglasses', 'Eye patch'], CHEEKS = ['None', 'Blush', 'Freckles'];
+const SKIN_ENUM = { hs: HAIR_STYLES, hat: HATS, back: BACKS, es: EYE_STYLES, br: BROWS, mo: MOUTHS, bd: BEARDS, gl: GLASSES, ck: CHEEKS };
 function skinStr(k) { return SKIN_KEYS.map(n => (k[n] >>> 0).toString(16)).join('.'); }
-function parseSkin(str) { const k = Object.assign({}, SKIN_DEF); if (typeof str !== 'string' || str.length > 120) return k; const p = str.split('.');
-  SKIN_KEYS.forEach((n, i) => { const v = parseInt(p[i], 16); if (Number.isFinite(v)) k[n] = n === 'hs' ? clamp(v, 0, HAIR_STYLES.length - 1) : n === 'hat' ? clamp(v, 0, HATS.length - 1) : n === 'back' ? clamp(v, 0, BACKS.length - 1) : clamp(v, 0, 0xffffff); }); return k; }
+function parseSkin(str) { const k = Object.assign({}, SKIN_DEF); if (typeof str !== 'string' || str.length > 160) return k; const p = str.split('.');
+  SKIN_KEYS.forEach((n, i) => { const v = parseInt(p[i], 16); if (Number.isFinite(v)) k[n] = SKIN_ENUM[n] ? clamp(v, 0, SKIN_ENUM[n].length - 1) : clamp(v, 0, 0xffffff); }); return k; }
 let mySkin = (() => { try { return parseSkin(localStorage.getItem('mq-skin') || ''); } catch (e) { return Object.assign({}, SKIN_DEF); } })();
+const shade = (c, f) => { const o = new THREE.Color(c); o.multiplyScalar(f); return o.getHex(); };
+// proportions: hips 0.92, shoulders 1.55, head centre 1.88 (radius .25) — a person, not a ball with legs
+const HEAD_Y = 1.88, HEAD_R = .25;
 function buildPlayer(sk = SKIN_DEF, toScene = true) {
   const g = new THREE.Group();
-  const skin = sk.s, tunic = sk.sh, pants = sk.pa, hair = sk.ha, acc = sk.ac;
-  mesh(new THREE.CylinderGeometry(.36, .44, .85, 10), tunic, null, g, 0, 1.08, 0);
-  mesh(new THREE.CylinderGeometry(.45, .45, .12, 10), 0x6b4423, null, g, 0, .74, 0);
-  mesh(new THREE.BoxGeometry(.14, .12, .06), 0xffd040, { metalness: .6 }, g, 0, .74, .44);
-  const head = mesh(new THREE.SphereGeometry(.38, 16, 12), skin, null, g, 0, 1.82, 0);
-  // hair styles
-  const hairCap = () => mesh(new THREE.SphereGeometry(.405, 16, 10, 0, Math.PI * 2, 0, Math.PI * .55), hair, null, g, 0, 1.86, -.03);
-  if (sk.hs === 0) hairCap();
-  else if (sk.hs === 1) { hairCap(); mesh(new THREE.BoxGeometry(.72, .62, .22), hair, null, g, 0, 1.62, -.26); for (const s of [-1, 1]) mesh(new THREE.BoxGeometry(.14, .5, .3), hair, null, g, s * .33, 1.66, -.06); }
-  else if (sk.hs === 2) { hairCap(); for (let k = 0; k < 7; k++) { const a = k / 7 * Math.PI * 2; const c = mesh(new THREE.ConeGeometry(.1, .32, 6), hair, null, g, Math.cos(a) * .2, 2.18, Math.sin(a) * .2 - .04); c.rotation.set(Math.sin(a) * .5, 0, -Math.cos(a) * .5); } }
-  else if (sk.hs === 3) { hairCap(); mesh(new THREE.SphereGeometry(.13, 10, 8), hair, null, g, 0, 1.92, -.42); const t = mesh(new THREE.CylinderGeometry(.09, .04, .55, 8), hair, null, g, 0, 1.62, -.5); t.rotation.x = .3; }
-  else if (sk.hs === 5) { for (let k = 0; k < 6; k++) mesh(new THREE.BoxGeometry(.1, .26, .16), hair, null, g, 0, 2.12 - Math.abs(k - 2.5) * .05, .26 - k * .12); }
-  // eyes + cheeks
-  for (const s of [-1, 1]) { mesh(new THREE.SphereGeometry(.07, 8, 6), sk.ey, { roughness: .3 }, g, s * .14, 1.84, .33);
-    mesh(new THREE.SphereGeometry(.06, 8, 6), 0xff9a9a, null, g, s * .24, 1.72, .3); }
-  // hats
-  if (sk.hat === 1) { mesh(new THREE.SphereGeometry(.41, 16, 8, 0, Math.PI * 2, 0, Math.PI * .5), acc, null, g, 0, 1.9, 0); mesh(new THREE.BoxGeometry(.5, .05, .32), acc, null, g, 0, 1.92, .42); }
-  else if (sk.hat === 2) { mesh(new THREE.CylinderGeometry(.3, .3, .2, 14, 1, true), 0xffcf40, { metalness: .9, roughness: .25, side: THREE.DoubleSide }, g, 0, 2.22, 0); for (let k = 0; k < 6; k++) { const a = k / 6 * Math.PI * 2; mesh(new THREE.ConeGeometry(.06, .18, 6), 0xffcf40, { metalness: .9, roughness: .25 }, g, Math.cos(a) * .27, 2.39, Math.sin(a) * .27); } mesh(new THREE.OctahedronGeometry(.06), 0xff3050, { roughness: .1 }, g, 0, 2.24, .3); }
-  else if (sk.hat === 3) { mesh(new THREE.CylinderGeometry(.62, .62, .05, 18), acc, null, g, 0, 2.08, 0); const c = mesh(new THREE.ConeGeometry(.36, 1, 14), acc, null, g, 0, 2.58, -.05); c.rotation.x = -.15; mesh(new THREE.OctahedronGeometry(.06), 0xfff070, { emissive: 0xffe040, emissiveIntensity: .8 }, g, 0, 2.45, .25); }
-  else if (sk.hat === 4) { for (const s of [-1, 1]) { const c = mesh(new THREE.ConeGeometry(.08, .42, 8), 0xf0e6d0, null, g, s * .28, 2.18, 0); c.rotation.z = -s * .55; } }
-  else if (sk.hat === 5) { const b = mesh(new THREE.TorusGeometry(.385, .05, 6, 20), acc, null, g, 0, 1.98, 0); b.rotation.x = Math.PI / 2; }
-  else if (sk.hat === 6) { mesh(new THREE.CylinderGeometry(.5, .5, .04, 18), 0x1a1a1a, null, g, 0, 2.1, 0); mesh(new THREE.CylinderGeometry(.3, .3, .55, 16), 0x1a1a1a, null, g, 0, 2.38, 0); mesh(new THREE.CylinderGeometry(.305, .305, .09, 16), acc, null, g, 0, 2.17, 0); }
-  else if (sk.hat === 7) { mesh(new THREE.SphereGeometry(.42, 16, 8, 0, Math.PI * 2, 0, Math.PI * .5), 0x9aa0a8, { metalness: .8, roughness: .35 }, g, 0, 1.88, 0); for (const s of [-1, 1]) { const c = mesh(new THREE.ConeGeometry(.08, .45, 8), 0xf0e6d0, null, g, s * .4, 2.12, 0); c.rotation.z = -s * 1.1; } }
-  // back piece
-  if (sk.back === 0) mesh(new THREE.ConeGeometry(.5, .6, 10), acc, null, g, 0, 1.45, -.12).scale.z = .6; // scarf
-  else if (sk.back === 1) { mesh(new THREE.ConeGeometry(.5, .5, 10), acc, null, g, 0, 1.47, -.1).scale.z = .6; const cp = mesh(new THREE.BoxGeometry(.82, 1.15, .05), acc, { side: THREE.DoubleSide }, g, 0, .98, -.42); cp.rotation.x = .12; }
-  else if (sk.back === 2) { mesh(new THREE.BoxGeometry(.6, .7, .32), sk.bt, null, g, 0, 1.1, -.5); mesh(new THREE.BoxGeometry(.5, .25, .1), acc, null, g, 0, .95, -.68); }
-  else if (sk.back === 3) { for (const s of [-1, 1]) { const w = mesh(new THREE.BoxGeometry(.8, .5, .03), 0xffffff, { roughness: .8, side: THREE.DoubleSide }, g, s * .45, 1.45, -.45); w.rotation.set(0, s * .5, s * .35); } }
+  const skin = sk.s, tunic = sk.sh, pants = sk.pa, hair = sk.ha, acc = sk.ac, dark = 0x1a1410;
+  const P = (geo, col, opts, x, y, z, parent = g) => mesh(geo, col, opts, parent, x, y, z);
+  const C = (rt, rb, h, n = 12, ...q) => new THREE.CylinderGeometry(rt, rb, h, n, ...q), S = (r, a = 14, b = 10, ...q) => new THREE.SphereGeometry(r, a, b, ...q), Bx = (w, h, d) => new THREE.BoxGeometry(w, h, d);
+  // torso: tapered, a bit flat front-to-back, with shoulders and a collar
+  const torso = P(C(.29, .24, .58, 14), tunic, null, 0, 1.28, 0); torso.scale.z = .68;
+  P(C(.25, .27, .16, 14), pants, null, 0, .96, 0).scale.z = .7; // hips
+  P(C(.255, .255, .06, 14), 0x5a3a1e, null, 0, 1.03, 0).scale.z = .72; // belt
+  P(Bx(.09, .07, .03), 0xd8b040, { metalness: .7, roughness: .3 }, 0, 1.03, .19);
+  for (const s of [-1, 1]) P(S(.105, 12, 8), tunic, null, s * .28, 1.52, 0).scale.set(1, .8, .85); // shoulders
+  P(C(.13, .15, .05, 14), shade(tunic, .8), null, 0, 1.585, 0).scale.z = .8; // collar
+  P(C(.075, .085, .14, 10), skin, null, 0, 1.64, 0); // neck
+  // head: slightly egg-shaped, ears, nose
+  const head = P(S(HEAD_R, 20, 16), skin, null, 0, HEAD_Y, 0); head.scale.set(.95, 1.08, 1);
+  for (const s of [-1, 1]) P(S(.05, 8, 6), skin, null, s * .235, HEAD_Y - .01, -.01).scale.set(.5, 1, .8);
+  P(S(.032, 8, 6), shade(skin, .93), null, 0, HEAD_Y - .045, .245).scale.set(1, 1.2, 1.1);
+  // ---- face (front of the head is +z, surface at about z = .24)
+  const fz = .228, ey = HEAD_Y + .015;
+  for (const s of [-1, 1]) { const ex = s * .085;
+    if (sk.es === 3) { const a = P(new THREE.TorusGeometry(.03, .009, 6, 12, Math.PI), dark, null, ex, ey - .01, fz + .012); } // happy: closed arcs
+    else { const big = sk.es === 1 ? 1.25 : 1, narrow = sk.es === 4 ? .55 : 1;
+      const wht = P(S(.038 * big, 12, 10), 0xfbfaf6, { roughness: .3 }, ex, ey, fz); wht.scale.set(1.15, narrow, .55);
+      P(S(.022 * big, 10, 8), sk.ey, { roughness: .25 }, ex, ey - .002, fz + .016).scale.set(1, narrow, .5);
+      P(S(.011 * big, 8, 6), 0x080808, { roughness: .1 }, ex, ey - .002, fz + .024).scale.set(1, narrow, .5);
+      P(S(.005, 6, 4), 0xffffff, { emissive: 0xffffff, emissiveIntensity: .5 }, ex + .008, ey + .008, fz + .029);
+      if (sk.es === 2) { const lid = P(S(.04, 12, 8, 0, Math.PI * 2, 0, Math.PI * .5), skin, null, ex, ey - .004, fz + .006); lid.scale.set(1.2, .8, .7); lid.rotation.x = .25; } } // sleepy eyelids
+    // eyebrows
+    if (sk.br) { const w = sk.br === 2 ? .07 : .06, h = sk.br === 2 ? .02 : .012, b = P(Bx(w, h, .015), shade(hair, .85), null, ex, ey + (sk.br === 3 ? .062 : .05), fz + .01);
+      b.rotation.z = sk.br === 4 ? -s * .25 : sk.br === 3 ? s * .12 : s * .05; }
+    // cheeks
+    if (sk.ck === 1) P(S(.03, 8, 6), 0xff9a9a, { transparent: true, opacity: .55 }, s * .13, ey - .07, fz - .01).scale.set(1.2, .7, .4);
+    if (sk.ck === 2) for (let f = 0; f < 4; f++) P(S(.006, 5, 4), shade(skin, .62), null, s * (.1 + (f % 2) * .03), ey - .06 - (f >> 1) * .022, .214);
+  }
+  // mouth
+  const my = HEAD_Y - .1, mz = .237 + (sk.bd === 2 ? .032 : 0);
+  if (sk.mo === 0) { const m = P(new THREE.TorusGeometry(.04, .008, 6, 14, Math.PI), 0x7a3030, null, 0, my + .025, mz); m.rotation.z = Math.PI; }
+  else if (sk.mo === 1) P(Bx(.07, .012, .012), 0x7a3030, null, 0, my, mz + .005);
+  else if (sk.mo === 2) { P(Bx(.09, .035, .02), 0x5a1818, null, 0, my, mz); P(Bx(.08, .014, .022), 0xffffff, null, 0, my + .008, mz + .002); }
+  else if (sk.mo === 3) P(S(.026, 10, 8), 0x4a1212, null, 0, my - .005, mz - .004).scale.set(1, 1.25, .5);
+  else if (sk.mo === 4) { const m = P(new THREE.TorusGeometry(.035, .008, 6, 12, Math.PI * .6), 0x7a3030, null, .015, my + .02, mz); m.rotation.z = Math.PI * 1.15; }
+  // facial hair (hair colour)
+  const fh = shade(hair, .9);
+  if (sk.bd === 1) for (const s of [-1, 1]) { const m = P(Bx(.066, .026, .022), fh, null, s * .034, my + .026, mz + .008); m.rotation.z = -s * .28; }
+  else if (sk.bd === 2) { const b = P(S(.262, 18, 10, 0, Math.PI, Math.PI * .56, Math.PI * .44), fh, null, 0, HEAD_Y, .004); b.scale.set(.97, 1.1, 1.04); P(S(.09, 10, 8), fh, null, 0, HEAD_Y - .23, .13).scale.set(1.3, .8, 1);
+    for (const s of [-1, 1]) { const m = P(Bx(.065, .026, .022), fh, null, s * .034, my + .028, mz - .008); m.rotation.z = -s * .25; } }
+  else if (sk.bd === 3) { P(C(.03, .015, .09, 8), fh, null, 0, my - .07, mz - .01); for (const s of [-1, 1]) { const m = P(Bx(.05, .016, .018), fh, null, s * .028, my + .03, mz + .012); m.rotation.z = -s * .2; } }
+  else if (sk.bd === 4) { const b = P(S(.252, 16, 10, 0, Math.PI * 2, Math.PI * .58, Math.PI * .42), shade(skin, .78), { transparent: true, opacity: .5 }, 0, HEAD_Y, 0); b.scale.set(.96, 1.09, 1.01); }
+  // glasses
+  if (sk.gl === 1 || sk.gl === 2) { const fr = 0x222222;
+    for (const s of [-1, 1]) { const r = sk.gl === 1 ? P(new THREE.TorusGeometry(.038, .006, 6, 18), fr, { metalness: .6 }, s * .085, ey, fz + .035) : P(Bx(.085, .06, .008), fr, { transparent: true, opacity: .25 }, s * .085, ey, fz + .035);
+      if (sk.gl === 2) { for (const yy of [-.03, .03]) P(Bx(.088, .008, .01), fr, null, s * .085, ey + yy, fz + .036); }
+      P(Bx(.075, .008, .008), fr, null, s * .16, ey + .01, fz + .03); P(Bx(.008, .008, .16), fr, null, s * .205, ey + .01, .17); }
+    P(Bx(.04, .006, .008), fr, null, 0, ey + .01, fz + .04); }
+  else if (sk.gl === 3) { for (const s of [-1, 1]) P(Bx(.09, .055, .012), 0x111111, { roughness: .1, metalness: .5 }, s * .085, ey, fz + .035); P(Bx(.05, .008, .01), 0x111111, null, 0, ey + .015, fz + .04);
+    for (const s of [-1, 1]) { P(Bx(.075, .008, .008), 0x111111, null, s * .16, ey + .01, fz + .03); P(Bx(.008, .008, .16), 0x111111, null, s * .205, ey + .01, .17); } }
+  else if (sk.gl === 4) { P(C(.045, .045, .012, 14), 0x111111, null, .085, ey, fz + .03).rotation.x = Math.PI / 2;
+    const st = P(new THREE.TorusGeometry(.255, .005, 4, 30), 0x111111, null, 0, ey + .03, 0); st.rotation.set(Math.PI / 2, .35, 0); st.scale.set(1, 1.05, 1); }
+  // ---- hair (sits on the head, never over the eyes)
+  const hy = HEAD_Y + .03;
+  const cap = (back = .55) => { const c = P(S(.262, 20, 12, 0, Math.PI * 2, 0, Math.PI * back), hair, null, 0, hy, -.012); c.scale.set(.98, 1.07, 1.04); c.rotation.x = -.5; return c; };
+  if (sk.hs === 0) { cap(); }
+  else if (sk.hs === 1) { cap(); const bk = P(Bx(.42, .5, .09), hair, null, 0, HEAD_Y - .2, -.25); bk.rotation.x = .1; for (const s of [-1, 1]) P(Bx(.07, .4, .17), hair, null, s * .215, HEAD_Y - .12, -.09); }
+  else if (sk.hs === 2) { cap(.5); for (let k = 0; k < 9; k++) { const a = k / 9 * Math.PI * 2, rr = k % 2 ? .1 : .16, c = P(new THREE.ConeGeometry(.055, .16, 6), hair, null, Math.cos(a) * rr, HEAD_Y + .26, Math.sin(a) * rr - .03); c.rotation.set(Math.sin(a) * .7, 0, -Math.cos(a) * .7); } }
+  else if (sk.hs === 3) { cap(); P(S(.06, 10, 8), shade(acc, 1), null, 0, HEAD_Y + .1, -.255); const t = P(C(.055, .025, .34, 8), hair, null, 0, HEAD_Y - .06, -.3); t.rotation.x = .3; }
+  else if (sk.hs === 5) { for (let k = 0; k < 7; k++) { const z = .14 - k * .055, y = HEAD_Y + .27 * Math.sqrt(Math.max(0, 1 - (z / .25) ** 2)) + .03; P(Bx(.05, .12, .06), hair, null, 0, y, z); } }
+  else if (sk.hs === 6) { cap(.5); for (let k = 0; k < 30; k++) { const a = k * 2.4, el = .1 + (k % 6) * .22, x = Math.cos(a) * Math.sin(el) * .255, z = Math.sin(a) * Math.sin(el) * .26 - .01, y = hy + Math.cos(el) * .27;
+      if (z > .1 && el > .6) continue; P(S(.06, 8, 6), hair, null, x, y, z); } }
+  else if (sk.hs === 7) { cap(); P(S(.09, 12, 10), hair, null, 0, HEAD_Y + .25, -.12); }
+  // ---- hats (sized to the head)
+  const top = HEAD_Y + HEAD_R * 1.08;
+  if (sk.hat === 1) { const c = P(S(.27, 18, 10, 0, Math.PI * 2, 0, Math.PI * .5), acc, null, 0, HEAD_Y + .04, -.01); c.scale.y = .95; const v = P(Bx(.3, .02, .17), shade(acc, .85), null, 0, HEAD_Y + .07, .24); v.rotation.x = -.18; P(S(.025), shade(acc, .7), null, 0, top + .02, -.01); }
+  else if (sk.hat === 2) { const gold = { metalness: .9, roughness: .25 }; P(C(.205, .2, .1, 18, 1, true), 0xffcf40, Object.assign({ side: THREE.DoubleSide }, gold), 0, HEAD_Y + .17, 0);
+    for (let k = 0; k < 6; k++) { const a = k / 6 * Math.PI * 2; P(new THREE.ConeGeometry(.035, .1, 6), 0xffcf40, gold, Math.cos(a) * .2, HEAD_Y + .27, Math.sin(a) * .2); } P(new THREE.OctahedronGeometry(.03), 0xff3050, { roughness: .1 }, 0, HEAD_Y + .17, .21); }
+  else if (sk.hat === 3) { P(C(.42, .42, .03, 22), acc, null, 0, HEAD_Y + .12, 0); const c = P(new THREE.ConeGeometry(.24, .62, 16), acc, null, 0, HEAD_Y + .46, -.04); c.rotation.x = -.18; P(new THREE.OctahedronGeometry(.04), 0xfff070, { emissive: 0xffe040, emissiveIntensity: .8 }, 0, HEAD_Y + .3, .19); P(C(.243, .243, .07, 16), shade(acc, .7), null, 0, HEAD_Y + .16, 0); }
+  else if (sk.hat === 4) { for (const s of [-1, 1]) { const c = P(new THREE.ConeGeometry(.045, .22, 8), 0xf0e6d0, null, s * .15, HEAD_Y + .26, .02); c.rotation.z = -s * .4; } }
+  else if (sk.hat === 5) { const b = P(new THREE.TorusGeometry(.248, .022, 6, 24), acc, null, 0, HEAD_Y + .1, 0); b.rotation.x = Math.PI / 2 + .25; b.scale.set(.97, 1.03, 1); }
+  else if (sk.hat === 6) { P(C(.34, .34, .025, 20), 0x151515, null, 0, HEAD_Y + .16, 0); P(C(.2, .21, .38, 18), 0x151515, null, 0, HEAD_Y + .36, 0); P(C(.212, .212, .06, 18), acc, null, 0, HEAD_Y + .2, 0); }
+  else if (sk.hat === 7) { const st = { metalness: .8, roughness: .35 }; const h = P(S(.272, 18, 10, 0, Math.PI * 2, 0, Math.PI * .5), 0x9aa0a8, st, 0, HEAD_Y + .03, 0); h.scale.y = 1.05;
+    P(C(.275, .275, .04, 20), 0x7a6040, st, 0, HEAD_Y + .03, 0); P(Bx(.026, .08, .026), 0x9aa0a8, st, 0, HEAD_Y + .05, .262);
+    for (const s of [-1, 1]) { const c = P(new THREE.ConeGeometry(.045, .26, 8), 0xf0e6d0, null, s * .32, HEAD_Y + .17, 0); c.rotation.z = -s * .9; } }
+  // ---- back pieces (hang from the shoulders, never through the body)
+  if (sk.back === 0) { const sc = P(new THREE.TorusGeometry(.12, .045, 8, 18), acc, null, 0, 1.6, 0); sc.rotation.x = Math.PI / 2; sc.scale.set(1, .85, 1);
+    const tail = P(Bx(.08, .3, .03), acc, null, .09, 1.43, .215); tail.rotation.z = .12; P(Bx(.085, .03, .035), shade(acc, .75), null, .1, 1.3, .22); }
+  else if (sk.back === 1) { const cp = new THREE.Group(); cp.position.set(0, 1.58, -.2); cp.rotation.x = .1; g.add(cp);
+    const cl = P(Bx(.62, 1.08, .025), acc, { side: THREE.DoubleSide }, 0, -.54, 0, cp); P(Bx(.6, .05, .03), shade(acc, .7), null, 0, -1.07, 0, cp);
+    for (const s of [-1, 1]) P(S(.022), 0xffcf40, { metalness: .8, roughness: .3 }, s * .19, 1.56, .15); }
+  else if (sk.back === 2) { P(Bx(.4, .46, .18), sk.bt, null, 0, 1.28, -.27); P(Bx(.3, .14, .06), shade(sk.bt, .8), null, 0, 1.16, -.38); P(Bx(.4, .06, .19), shade(sk.bt, .7), null, 0, 1.5, -.27);
+    for (const s of [-1, 1]) { const st = P(Bx(.05, .42, .02), shade(sk.bt, .7), null, s * .14, 1.33, .2); st.rotation.x = -.05; P(Bx(.05, .03, .24), shade(sk.bt, .7), null, s * .14, 1.55, -.04); } }
+  else if (sk.back === 3) { const wm = { roughness: .85, side: THREE.DoubleSide };
+    for (const s of [-1, 1]) { const w = new THREE.Group(); w.position.set(s * .08, 1.42, -.2); w.rotation.set(.15, -s * .55, s * .25); g.add(w);
+      for (let f = 0; f < 5; f++) { const fe = P(Bx(.5 - f * .06, .1, .02), f % 2 ? 0xf4f4f8 : 0xffffff, wm, s * (.25 - f * .02), .14 - f * .085, -f * .01, w); fe.rotation.z = s * (.25 - f * .1); } } }
+  // ---- legs (thigh + shin + shoe) and arms (sleeve + forearm + hand), pivoting at hips / shoulders
   const legs = [], arms = [];
   for (const s of [-1, 1]) {
-    const lp = new THREE.Group(); lp.position.set(s * .18, .7, 0); g.add(lp);
-    mesh(new THREE.BoxGeometry(.22, .62, .24), pants, null, lp, 0, -.32, 0); mesh(new THREE.BoxGeometry(.25, .14, .34), sk.bt, null, lp, 0, -.64, .05); legs.push(lp);
-    const ap = new THREE.Group(); ap.position.set(s * .5, 1.42, 0); g.add(ap);
-    mesh(new THREE.BoxGeometry(.17, .58, .17), tunic, null, ap, 0, -.27, 0); mesh(new THREE.SphereGeometry(.11, 8, 6), skin, null, ap, 0, -.6, 0); arms.push(ap);
+    const lp = new THREE.Group(); lp.position.set(s * .12, .92, 0); g.add(lp);
+    P(C(.11, .09, .46, 10), pants, null, 0, -.22, 0, lp); P(C(.09, .075, .42, 10), pants, null, 0, -.6, 0, lp);
+    P(Bx(.17, .1, .3), sk.bt, null, 0, -.85, .05, lp); P(Bx(.175, .03, .31), shade(sk.bt, .6), null, 0, -.895, .05, lp); legs.push(lp);
+    const ap = new THREE.Group(); ap.position.set(s * .33, 1.52, 0); g.add(ap);
+    P(C(.075, .065, .36, 10), tunic, null, 0, -.17, 0, ap); P(C(.064, .052, .3, 10), tunic, null, 0, -.48, 0, ap);
+    P(C(.066, .066, .04, 10), shade(tunic, .8), null, 0, -.62, 0, ap); P(S(.062, 10, 8), skin, null, 0, -.68, .01, ap).scale.set(.9, 1.1, .8); arms.push(ap);
   }
-  const hand = new THREE.Group(); hand.position.set(0, -.6, .05); hand.rotation.x = Math.PI / 2; arms[1].add(hand);
+  const hand = new THREE.Group(); hand.position.set(0, -.68, .05); hand.rotation.x = Math.PI / 2; arms[1].add(hand);
   if (toScene) scene.add(g);
   return { g, legs, arms, hand, head, held: null };
 }
@@ -2485,7 +2560,7 @@ function nearestMonster(p, maxD, filter) {
 function applyHit(m, dmg, T, dir, opts = {}) {
   if (m.dead) return;
   if (m.ghost) return ghostHit(m, dmg, T, dir, opts); // a friend's world: tell the host, it applies the hit
-  if (NET.role === 'host') m.lastBy = HIT_FROM || 'host';
+  if (NET.role === 'host') { m.lastBy = HIT_FROM || 'host'; if (m.tgt && m.tgt !== m.lastBy && !opts.splash && rand() < (m.boss ? .15 : .5)) m.tgtUntil = 0; } // hitting a monster can turn it on you
   let crit = false; const critCh = Math.min(.85, .12 * (T.clover || 0) + .2 * (T.demonhorn || 0) + .3 * (T.sunshard || 0));
   if (critCh > 0 && rand() < critCh) { dmg *= (T.sunshard && T.moon) ? 5 : T.sunshard ? 3 : 2; crit = true; }
   if (T.meat && T.axe && player.hp < player.max * .4) dmg *= 2; // BERSERKER
@@ -3532,7 +3607,7 @@ function netState(d) {
   const id = String(d.id).slice(0, 64); let o = NET.others.get(id);
   if (!o) { if (NET.others.size >= 8) return;
     const tagC = document.createElement('canvas'); tagC.width = 256; tagC.height = 72; const tagTex = new THREE.CanvasTexture(tagC);
-    const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: tagTex, transparent: true, depthWrite: false })); tag.scale.set(2.4, .68, 1); tag.position.y = 2.75;
+    const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: tagTex, transparent: true, depthWrite: false })); tag.scale.set(2.4, .68, 1); tag.position.y = 2.85;
     o = { id, name: 'Player', a: null, tag, sk: null, tagC, tagTex, x: num(d.x, -HALF, HALF), y: num(d.y, -400, 400), z: num(d.z, -HALF, HALF), tx: 0, ty: 0, tz: 0, yaw: 0, hp: 100, mx: 100, u: -1, alive: true, vis: false, held: null, hs: '', walk: 0, seen: 0, tagKey: '' };
     NET.others.set(id, o); setTimeout(() => { if (NET.others.has(id)) { toast(`👥 <b>${esc(o.name)}</b> joined`, 2500); if (NET.role) mpLobby(); } }, 50); }
   o.name = String(d.n || 'Player').slice(0, 14); o.tx = num(d.x, -HALF, HALF); o.ty = num(d.y, -400, 400); o.tz = num(d.z, -HALF, HALF); o.yaw = num(d.yaw, -10, 10);
@@ -3557,18 +3632,25 @@ function netHurt(d) {
 // ---- skin editor: live 3D preview, colours, hair, hats, back pieces
 const skinEl = document.getElementById('skinScreen'), skinCtl = document.getElementById('skinCtl'), skinCv = document.getElementById('skinPrev');
 let skinPv = null, skinPrevState = null;
-const SKIN_TONES = [0xffe0c4, 0xffd2a8, 0xe8b48a, 0xc68a5c, 0x9a6440, 0x6a4028, 0x9fd88a, 0xa0b8ff];
+const SKIN_TONES = [0xfde3cf, 0xf2c6a0, 0xe0ac84, 0xc48a62, 0x9a6844, 0x6e4a30, 0x4a3020, 0x9fd88a];
+const HAIR_TONES = [0x2a1d14, 0x4a2e1a, 0x6b4423, 0x9a6a3a, 0xd8b060, 0xe8d8a8, 0xa83a1a, 0xb8b8b8], FACE_KEYS = ['ey', 'es', 'br', 'mo', 'bd', 'gl', 'ck'];
 const hex = n => '#' + (n >>> 0).toString(16).padStart(6, '0');
 function buildSkinCtl() {
   const col = (k, label) => `<label for="sk_${k}">${label}</label><input type="color" id="sk_${k}" data-k="${k}" value="${hex(mySkin[k])}">`;
   const sel = (k, label, opts) => `<label for="sk_${k}">${label}</label><select id="sk_${k}" data-k="${k}">${opts.map((o, i) => `<option value="${i}"${mySkin[k] === i ? ' selected' : ''}>${o}</option>`).join('')}</select>`;
-  skinCtl.innerHTML = `<div class="tones">${SKIN_TONES.map(t => `<button type="button" data-tone="${t}" style="background:${hex(t)}" title="Skin tone"></button>`).join('')}</div>` +
-    col('s', '🙂 Skin') + col('ey', '👀 Eyes') + col('ha', '💇 Hair') + sel('hs', '✂️ Hair style', HAIR_STYLES) + col('sh', '👕 Shirt') + col('pa', '👖 Pants') + col('bt', '👢 Shoes & bag') +
-    sel('hat', '🎩 Hat', HATS) + sel('back', '🧣 Back', BACKS) + col('ac', '🎨 Hat / scarf / cape');
+  const head = t => `<div class="sh">${t}</div>`, swatch = (key, list, tip) => `<div class="tones">${list.map(t => `<button type="button" data-sw="${key}" data-v="${t}" style="background:${hex(t)}" title="${tip}"></button>`).join('')}</div>`;
+  skinCtl.innerHTML = `<button type="button" class="sec zoom" id="skinZoom">${skinPv && skinPv.zoom ? '🧍 Whole body' : '🔍 Face close-up'}</button>` +
+    head('Body') + swatch('s', SKIN_TONES, 'Skin tone') + col('s', '🙂 Skin') + col('sh', '👕 Shirt') + col('pa', '👖 Pants') + col('bt', '👢 Shoes & bag') +
+    head('Face') + sel('es', '👁️ Eye shape', EYE_STYLES) + col('ey', '👀 Eye colour') + sel('br', '〰️ Eyebrows', BROWS) + sel('mo', '👄 Mouth', MOUTHS) + sel('bd', '🧔 Facial hair', BEARDS) + sel('gl', '👓 Glasses', GLASSES) + sel('ck', '🌸 Cheeks', CHEEKS) +
+    head('Hair') + swatch('ha', HAIR_TONES, 'Hair colour') + col('ha', '💇 Hair colour') + sel('hs', '✂️ Hair style', HAIR_STYLES) +
+    head('Style') + sel('hat', '🎩 Hat', HATS) + sel('back', '🧣 Back', BACKS) + col('ac', '🎨 Hat / scarf / cape');
 }
 function skinChanged() { try { localStorage.setItem('mq-skin', skinStr(mySkin)); } catch (e) { } applyMySkin(); if (skinPv) skinPreviewBuild(); }
-skinCtl.addEventListener('input', e => { const k = e.target.dataset.k; if (!k) return; mySkin[k] = e.target.type === 'color' ? parseInt(e.target.value.slice(1), 16) : +e.target.value; skinChanged(); });
-skinCtl.addEventListener('click', e => { const t = e.target.dataset && e.target.dataset.tone; if (!t) return; mySkin.s = +t; buildSkinCtl(); skinChanged(); });
+skinCtl.addEventListener('input', e => { const k = e.target.dataset.k; if (!k) return; mySkin[k] = e.target.type === 'color' ? parseInt(e.target.value.slice(1), 16) : +e.target.value;
+  if (skinPv) skinPv.zoom = FACE_KEYS.includes(k) || (skinPv.zoom && (k === 'ha' || k === 's')); skinChanged(); });
+skinCtl.addEventListener('click', e => { const d = e.target.dataset || {};
+  if (e.target.id === 'skinZoom') { if (skinPv) skinPv.zoom = !skinPv.zoom; buildSkinCtl(); return; }
+  if (!d.sw) return; mySkin[d.sw] = +d.v; buildSkinCtl(); skinChanged(); });
 function skinPreviewBuild() { if (skinPv.av) skinPv.scene.remove(skinPv.av.g); skinPv.av = buildPlayer(mySkin, false); skinPv.av.g.rotation.y = skinPv.rot; skinPv.scene.add(skinPv.av.g);
   skinPv.av.arms[0].rotation.x = .15; skinPv.av.arms[1].rotation.x = -.15; }
 function openSkin() {
@@ -3578,8 +3660,9 @@ function openSkin() {
     r.toneMapping = THREE.ACESFilmicToneMapping; r.outputEncoding = renderer.outputEncoding;
     const sc = new THREE.Scene(); sc.add(new THREE.HemisphereLight(0xdfefff, 0x3a3020, .9)); const dl = new THREE.DirectionalLight(0xffffff, 1.1); dl.position.set(2, 4, 3); sc.add(dl);
     const cam = new THREE.PerspectiveCamera(32, (skinCv.clientWidth || 240) / (skinCv.clientHeight || 300), .1, 50); cam.position.set(0, 1.45, 5.4); cam.lookAt(0, 1.25, 0);
-    skinPv = { r, scene: sc, cam, rot: .5, drag: null, av: null, on: true }; skinPreviewBuild();
-    const tick = () => { if (!skinPv || !skinPv.on) return; requestAnimationFrame(tick); if (!skinPv.drag) skinPv.rot += .008; skinPv.av.g.rotation.y = skinPv.rot; r.render(sc, cam); }; tick();
+    skinPv = { r, scene: sc, cam, rot: .5, drag: null, av: null, on: true, zoom: false, z: 0 }; skinPreviewBuild();
+    const tick = () => { if (!skinPv || !skinPv.on) return; requestAnimationFrame(tick); if (!skinPv.drag) skinPv.rot += skinPv.zoom ? .004 : .008; skinPv.av.g.rotation.y = skinPv.rot;
+      skinPv.z = lerp(skinPv.z, skinPv.zoom ? 1 : 0, .12); const z = skinPv.z; cam.position.set(0, lerp(1.45, 1.9, z), lerp(5.4, 1.45, z)); cam.lookAt(0, lerp(1.25, 1.86, z), 0); r.render(sc, cam); }; tick();
   } catch (e) { skinPv = null; }
 }
 function closeSkin() { skinEl.style.display = 'none'; if (skinPv) { skinPv.on = false; try { skinPv.r.dispose(); skinPv.r.forceContextLoss(); } catch (e) { } skinPv = null; }
@@ -3589,7 +3672,9 @@ skinCv.addEventListener('pointermove', e => { if (skinPv && skinPv.drag !== null
 skinCv.addEventListener('pointerup', () => { if (skinPv) skinPv.drag = null; });
 document.getElementById('startSkin').onclick = openSkin; document.getElementById('pauseSkin').onclick = openSkin; document.getElementById('skinDone').onclick = closeSkin;
 document.getElementById('skinRand').onclick = () => { const rc = () => Math.floor(Math.random() * 0xffffff), ri = n => Math.floor(Math.random() * n);
-  mySkin = { s: SKIN_TONES[ri(6)], sh: rc(), pa: rc(), ha: [0x7b4a22, 0x222222, 0xe8c060, 0xa04020, 0xd0d0d0, rc()][ri(6)], ey: [0x222222, 0x2050c0, 0x3a8a40, 0x6a4028][ri(4)], ac: rc(), bt: rc(), hs: ri(HAIR_STYLES.length), hat: ri(HATS.length), back: ri(BACKS.length) };
+  const ha = HAIR_TONES[ri(HAIR_TONES.length)], pickW = w => { let r = Math.random() * w.reduce((a, b) => a + b, 0); for (let i = 0; i < w.length; i++) if ((r -= w[i]) < 0) return i; return 0; };
+  mySkin = { s: SKIN_TONES[ri(7)], sh: rc(), pa: [0x2a3550, 0x4a5a78, 0x3a3a3a, 0x5a4030, 0x6a6a50, rc()][ri(6)], ha, ey: [0x5a3a20, 0x2a1a10, 0x3060b0, 0x3a7a40, 0x708090][ri(5)], ac: rc(), bt: [0x3a2414, 0x1a1a1a, 0x6a4a2a, rc()][ri(4)],
+    hs: ri(HAIR_STYLES.length), hat: pickW([5, 1, 1, 1, 1, 1, 1, 1]), back: ri(BACKS.length), es: pickW([5, 2, 1, 1, 1]), br: pickW([1, 5, 2, 1, 1]), mo: ri(MOUTHS.length), bd: pickW([6, 1, 1, 1, 1]), gl: pickW([6, 1, 1, 1, .5]), ck: ri(CHEEKS.length) };
   buildSkinCtl(); skinChanged(); };
 document.getElementById('skinReset').onclick = () => { mySkin = Object.assign({}, SKIN_DEF); buildSkinCtl(); skinChanged(); };
 
@@ -3599,10 +3684,26 @@ const PX = { x: 0, y: 0, z: 0, alive: true, under: null };
 function proxyOn(o) { PX.x = player.pos.x; PX.y = player.pos.y; PX.z = player.pos.z; PX.alive = alive; PX.under = player.under;
   player.pos.set(o.x, o.y, o.z); alive = o.alive; player.under = caveZones[o.u] || null; PROXY = o; }
 function proxyOff() { player.pos.set(PX.x, PX.y, PX.z); alive = PX.alive; player.under = PX.under; PROXY = null; }
-function pickTarget(m) { // host: the closest living player in the same place (surface / that cave) as the monster; null = you
-  const zi = m.cave ? caveZones.indexOf(m.cave) : -1; let best = null, bd = alive && caveZones.indexOf(player.under) === zi ? Math.hypot(player.pos.x - m.x, player.pos.z - m.z) : 1e9;
-  for (const o of NET.others.values()) { if (!o.alive || o.u !== zi) continue; const d = Math.hypot(o.x - m.x, o.z - m.z); if (d < bd) { bd = d; best = o; } }
-  return best; }
+// host: which player a monster goes after (returns a friend, or null = you). Monsters don't all pile onto one player:
+// each keeps a target for a few seconds, the pack spreads out over everyone nearby, a monster turns on whoever hits it,
+// and it switches to someone who walks right up to it. Bosses swap targets every few seconds so everybody gets attacked.
+function pickTarget(m) {
+  const zi = m.cave ? caveZones.indexOf(m.cave) : -1, cands = [];
+  if (alive && caveZones.indexOf(player.under) === zi) cands.push({ id: 'host', o: null, x: player.pos.x, z: player.pos.z });
+  for (const o of NET.others.values()) if (o.alive && o.u === zi) cands.push({ id: o.id, o, x: o.x, z: o.z });
+  if (!cands.length) { m.tgt = 'host'; return null; }
+  const dist = c => Math.hypot(c.x - m.x, c.z - m.z), cur = cands.find(c => c.id === m.tgt), near = cands.reduce((a, c) => dist(c) < dist(a) ? c : a);
+  let keep = cur && m.tgtUntil > playTime && dist(cur) < (m.boss ? 80 : 60);
+  if (keep && near !== cur && dist(near) < 3 && dist(cur) > 6) keep = false; // someone is right in its face
+  if (!keep) {
+    const load = {}; for (const q of monsters) if (q !== m && !q.dead && q.tgt) load[q.tgt] = (load[q.tgt] || 0) + 1;
+    let best = null, bs = 1e9;
+    for (const c of cands) { const d = dist(c); if (d > (m.boss ? 80 : 70)) continue;
+      const sc = d + 7 * (load[c.id] || 0) - (m.lastBy === c.id ? 14 : 0) + (m.boss && c.id === m.tgt ? 12 : 0) + rand() * 8; // bosses prefer someone new
+      if (sc < bs) { bs = sc; best = c; } }
+    best = best || near; m.tgt = best.id; m.tgtUntil = playTime + (m.boss ? R(4, 7) : R(3, 6)); }
+  const t = cands.find(c => c.id === m.tgt) || near; return t.o;
+}
 function netShot(from, v, dmg, k, col, el, big, life, m) { if (NET.role !== 'host' || !NET.conns.size) return;
   netSend({ t: 'ep', p: [r2(from.x), r2(from.y), r2(from.z)], v: [r2(v.x), r2(v.y), r2(v.z)], dmg: r2(dmg), k, col, el: el || null, big, l: life, mid: m && m.nid }); }
 function ghostHit(m, dmg, T, dir, opts) {
